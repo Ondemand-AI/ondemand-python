@@ -1,0 +1,29 @@
+[build-system]
+  requires = ["setuptools>=61.0", "wheel"]
+  build-backend = "setuptools.build_meta"
+
+  [project]
+  name = "ondemand"
+  version = "0.1.0"
+  description = "Ondemand Platform Integration Library for RPA Agents"
+  readme = "README.md"
+  requires-python = ">=3.10"
+  license = {text = "Proprietary"}
+  authors = [
+      {name = "Ondemand AI", email = "dev@ondemand.tec.br"}
+  ]
+
+  dependencies = [
+      "thoughtful==3.1.0",
+	  "t-vault-manager==1.0.3,
+      "requests>=2.31.0",
+      "pyyaml>=6.0.0",
+	  "boto3>=1.28.0",
+  ]
+
+  [project.optional-dependencies]
+  r2 = ["boto3>=1.28.0"]
+  all = ["boto3>=1.28.0"]
+
+  [tool.setuptools.packages.find]
+  include = ["ondemand*"]
