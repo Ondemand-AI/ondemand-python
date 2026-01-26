@@ -327,7 +327,7 @@ class supervised:
         self._default_manifest = manifest
         self._supervise_context = None
 
-        # Parse CLI args if not explicitly provided
+        # Parse CLI args and env vars if not explicitly provided
         if run_id is None or webhook_url is None or api_key is None:
             cli_run_id, cli_webhook_url, cli_api_key = parse_args()
             run_id = run_id or cli_run_id
@@ -338,10 +338,6 @@ class supervised:
         if run_id:
             set_run_id(run_id)
             logger.info(f"Run ID: {run_id}")
-
-        # Fall back to environment variable if api_key still not set
-        if api_key is None:
-            api_key = os.environ.get("ONDEMAND_API_KEY")
 
         self.run_id = run_id
         self.webhook_url = webhook_url
