@@ -4,7 +4,7 @@ CLI argument parsing and input retrieval for the agent.
 Provides consistent argument handling across all phases.
 
 Environment variables:
-- ONDEMAND_API_KEY: Static API key for webhook authentication (set on worker)
+- SUPERVISOR_WEBHOOK_SECRET: Static API key for webhook authentication (set on worker)
 - ONDEMAND_APP_URL: Base URL for the app (optional, defaults to https://app.ondemand-ai.com.br)
 - ONDEMAND_INPUTS: JSON string with run inputs/parameters (set by worker per-job)
 
@@ -102,7 +102,7 @@ def parse_args() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     _cached_run_id = run_id
 
     # Get api_key from CLI or env (static, same for all runs)
-    api_key = args.api_key or os.environ.get("ONDEMAND_API_KEY")
+    api_key = args.api_key or os.environ.get("SUPERVISOR_WEBHOOK_SECRET")
 
     # Get webhook_url from CLI, or construct from run_id
     webhook_url = args.webhook_url
