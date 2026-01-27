@@ -24,6 +24,10 @@ import shutil
 import requests
 from typing import Optional, Any, Dict, Callable
 
+# Suppress verbose "emit event" logs from thoughtful's event_bus.py
+# The thoughtful package incorrectly imports logger from Python's venv module
+# and logs every event at INFO level, cluttering console output
+logging.getLogger("venv").setLevel(logging.WARNING)
 
 from thoughtful.supervisor import shared_bus, supervise, step
 from thoughtful.supervisor.event_bus import (
