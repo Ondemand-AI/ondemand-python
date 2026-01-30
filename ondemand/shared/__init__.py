@@ -21,6 +21,7 @@ from ondemand.shared.artifacts import (
 from ondemand.shared.cli import parse_args
 from ondemand.shared.r2_storage import (
     upload_run_artifacts,
+    upload_task_artifacts,
     get_r2_client,
     R2StorageClient,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "get_exception_summary",
     # R2 storage
     "upload_run_artifacts",
+    "upload_task_artifacts",
     "get_r2_client",
     "R2StorageClient",
     # Backward compatibility

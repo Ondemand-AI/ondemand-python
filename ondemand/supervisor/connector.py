@@ -48,6 +48,7 @@ from ondemand.shared import (
     has_recorded_exceptions,
     get_exception_summary,
     upload_run_artifacts,
+    upload_task_artifacts,
 )
 
 logger = logging.getLogger(__name__)
@@ -400,6 +401,9 @@ class supervised:
         try:
             self._supervise_context.__exit__(exc_type, exc_val, exc_tb)
         finally:
+            # Upload artifacts for this task (incremental upload after each task)
+            self._upload_task_artifacts()
+
             # Emit final status if this is the last task
             if self.last_task:
                 # Check for exceptions: current task OR any previous task
@@ -418,32 +422,32 @@ class supervised:
                     shared_bus.emit(RunStatusChangeEvent(status=Status.SUCCEEDED, status_message="Run completed successfully"))
                     logger.info("Run status: SUCCEEDED (last_task)")
 
-                # Upload artifacts to R2 before cleanup
-                self._upload_artifacts_to_r2()
-
-                # Clean up local artifacts
+                # Clean up local artifacts after final task
                 self._cleanup_run_artifacts()
-
 
         # Don't suppress exceptions
         return False
 
-    def _upload_artifacts_to_r2(self):
-        """Upload all run artifacts to CloudFlare R2 and send webhook."""
+    def _upload_task_artifacts(self):
+        """Upload artifacts for the current task to R2 and send webhook."""
         if not self.run_id:
             logger.warning("No run_id set, skipping artifact upload")
             return
 
-        output_dir = get_base_output_dir()
-        if not output_dir.exists():
-            logger.warning(f"Output directory not found: {output_dir}")
+        if not self.task:
+            logger.debug("No task name set, skipping task artifact upload")
             return
 
-        # Upload artifacts to R2
-        uploaded_files = upload_run_artifacts(output_dir, self.run_id)
+        task_output_dir = get_output_dir(self.task)
+        if not task_output_dir.exists():
+            logger.debug(f"Task output directory not found: {task_output_dir}")
+            return
+
+        # Upload only this task's artifacts
+        uploaded_files = upload_task_artifacts(task_output_dir, self.run_id, self.task)
 
         if not uploaded_files:
-            logger.info("No artifacts to upload or upload failed")
+            logger.debug(f"No artifacts to upload for task {self.task}")
             return
 
         # Send webhook with artifact info
@@ -455,10 +459,11 @@ class supervised:
                     "artifacts": uploaded_files,
                     "total_count": len(uploaded_files),
                     "total_size": sum(f.get("size", 0) for f in uploaded_files),
+                    "task": self.task,
                 }
             }
             streamer.send_raw(payload)
-            logger.info(f"Artifacts webhook sent: {len(uploaded_files)} files")
+            logger.info(f"Artifacts webhook sent for task '{self.task}': {len(uploaded_files)} files")
         else:
             logger.warning("No streamer available, artifacts uploaded but webhook not sent")
 
