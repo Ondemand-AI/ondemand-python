@@ -237,3 +237,71 @@ def upload_run_artifacts(
     except Exception as e:
         logger.error(f"Failed to upload artifacts to R2: {e}")
         return []
+
+
+def upload_task_artifacts(
+    task_output_dir: Path,
+    run_id: str,
+    task_name: str,
+    prefix: str = "artifacts",
+) -> List[Dict[str, Any]]:
+    """
+    Upload artifacts from a specific task's output directory to R2.
+
+    This is called after each task completes to enable incremental artifact uploads.
+
+    Args:
+        task_output_dir: Task-specific output directory (e.g., output/{run_id}/{task}/)
+        run_id: Run ID
+        task_name: Name of the task (used for folder organization)
+        prefix: S3 key prefix (default: "artifacts")
+
+    Returns:
+        List of uploaded file info dicts
+    """
+    client = get_r2_client()
+
+    if not client.is_configured():
+        logger.warning("R2 storage not configured. Skipping task artifact upload.")
+        return []
+
+    task_output_dir = Path(task_output_dir)
+    if not task_output_dir.exists():
+        logger.debug(f"Task output directory not found: {task_output_dir}")
+        return []
+
+    uploaded_files = []
+
+    # Walk through all files in the task directory
+    for file_path in task_output_dir.rglob("*"):
+        if file_path.is_file():
+            # Create relative path from task_output_dir
+            relative_path = file_path.relative_to(task_output_dir)
+
+            # Build S3 key: prefix/run_id/task_name/relative_path
+            key = f"{prefix}/{run_id}/{task_name}/{relative_path}".replace("\\", "/")
+
+            try:
+                result = client.upload_file(
+                    file_path,
+                    key,
+                    metadata={
+                        "run-id": run_id,
+                        "task": task_name,
+                        "original-path": str(relative_path),
+                    },
+                )
+                # Add folder info for UI display (task_name/subfolder)
+                if relative_path.parent != Path("."):
+                    result["folder"] = f"{task_name}/{relative_path.parent}".replace("\\", "/")
+                else:
+                    result["folder"] = task_name
+                uploaded_files.append(result)
+                logger.info(f"Uploaded task artifact: {key} ({result['size']} bytes)")
+            except Exception as e:
+                logger.error(f"Failed to upload {file_path}: {e}")
+
+    if uploaded_files:
+        logger.info(f"Successfully uploaded {len(uploaded_files)} artifacts for task '{task_name}'")
+
+    return uploaded_files
