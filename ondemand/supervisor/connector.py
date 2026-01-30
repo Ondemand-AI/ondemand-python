@@ -21,6 +21,7 @@ import functools
 import logging
 import os
 import shutil
+import subprocess
 import requests
 from typing import Optional, Any, Dict, Callable
 
@@ -56,6 +57,100 @@ logger = logging.getLogger(__name__)
 # Global state
 _ondemand_streamer: Optional["OndemandStreamer"] = None
 _step_stack: list = []  # Stack to track parent-child relationships
+_git_info: Optional[Dict[str, Any]] = None  # Cached git info for current robot
+
+
+def get_git_info() -> Optional[Dict[str, Any]]:
+    """
+    Get git information for the current working directory.
+    Returns dict with repo_url, branch, commit_hash, commit_message, author.
+    Returns None if not in a git repository.
+    """
+    global _git_info
+
+    # Return cached info if available
+    if _git_info is not None:
+        return _git_info
+
+    try:
+        # Get remote URL
+        result = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        repo_url = result.stdout.strip() if result.returncode == 0 else None
+
+        # Clean up repo URL (remove .git suffix, convert SSH to HTTPS for display)
+        if repo_url:
+            if repo_url.endswith(".git"):
+                repo_url = repo_url[:-4]
+            # Convert SSH URL to HTTPS for clickable links
+            if repo_url.startswith("git@github.com:"):
+                repo_url = repo_url.replace("git@github.com:", "https://github.com/")
+
+        # Get current branch
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        branch = result.stdout.strip() if result.returncode == 0 else None
+
+        # Get current commit hash (short)
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        commit_hash = result.stdout.strip() if result.returncode == 0 else None
+
+        # Get full commit hash for linking
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        commit_hash_full = result.stdout.strip() if result.returncode == 0 else None
+
+        # Get commit message (first line)
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        commit_message = result.stdout.strip() if result.returncode == 0 else None
+
+        # Get commit author
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%an"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        author = result.stdout.strip() if result.returncode == 0 else None
+
+        if repo_url or branch or commit_hash:
+            _git_info = {
+                "repo_url": repo_url,
+                "branch": branch,
+                "commit_hash": commit_hash,
+                "commit_hash_full": commit_hash_full,
+                "commit_message": commit_message,
+                "author": author,
+            }
+            logger.info(f"Git info captured: {branch} @ {commit_hash}")
+            return _git_info
+
+    except Exception as e:
+        logger.debug(f"Could not get git info: {e}")
+
+    return None
 
 
 class OndemandStreamer:
@@ -154,6 +249,12 @@ class OndemandStreamer:
             "end_time": step_report.end_time.isoformat() if step_report.end_time else None,
             "parent_step_id": parent_step_id,
         }
+
+        # Include git info when step starts (for version tracking)
+        if status == "running" and not is_record_event:
+            git_info = get_git_info()
+            if git_info:
+                step_data["git_info"] = git_info
 
         # Include record data if present
         if is_record_event:
