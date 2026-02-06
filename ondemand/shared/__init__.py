@@ -19,6 +19,7 @@ from ondemand.shared.artifacts import (
     load_state,
 )
 from ondemand.shared.cli import parse_args
+from ondemand.shared.logging import get_logger, configure_logging, OndemandLogger
 from ondemand.shared.r2_storage import (
     upload_run_artifacts,
     upload_task_artifacts,
@@ -49,4 +50,8 @@ __all__ = [
     # Backward compatibility
     "save_state",
     "load_state",
+    # Logging
+    "get_logger",
+    "configure_logging",
+    "OndemandLogger",
 ]
