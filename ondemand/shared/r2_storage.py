@@ -80,12 +80,18 @@ class R2StorageClient:
                     missing.append("R2_BUCKET")
                 raise RuntimeError(f"R2 storage not configured. Missing: {', '.join(missing)}")
 
+            from botocore.config import Config
             self._client = boto3.client(
                 "s3",
                 endpoint_url=self.endpoint,
                 aws_access_key_id=self.access_key,
                 aws_secret_access_key=self.secret_key,
                 region_name="auto",
+                config=Config(
+                    connect_timeout=10,
+                    read_timeout=50,
+                    retries={"max_attempts": 1},
+                ),
             )
         return self._client
 
