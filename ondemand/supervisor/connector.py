@@ -22,6 +22,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 import requests
 from typing import Optional, Any, Dict, Callable
 
@@ -297,17 +298,30 @@ class OndemandStreamer:
         self._send(payload)
         logger.info(f"Run status sent: {event.status.value}")
 
-    def _send(self, payload: Dict[str, Any]) -> None:
-        """Send payload to Ondemand webhook."""
-        try:
-            response = self._session.post(
-                self.webhook_url,
-                json=payload,
-                timeout=10,
-            )
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Webhook request failed: {e}")
+    def _send(self, payload: Dict[str, Any], max_retries: int = 3) -> None:
+        """Send payload to Ondemand webhook with retry on transient errors."""
+        for attempt in range(max_retries + 1):
+            try:
+                response = self._session.post(
+                    self.webhook_url,
+                    json=payload,
+                    timeout=10,
+                )
+                response.raise_for_status()
+                return
+            except requests.exceptions.RequestException as e:
+                is_retryable = (
+                    isinstance(e, requests.exceptions.ConnectionError)
+                    or isinstance(e, requests.exceptions.Timeout)
+                    or (hasattr(e, 'response') and e.response is not None
+                        and e.response.status_code in (502, 503, 504))
+                )
+                if is_retryable and attempt < max_retries:
+                    wait = 2 ** attempt  # 1s, 2s, 4s
+                    logger.warning(f"Webhook failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {wait}s: {e}")
+                    time.sleep(wait)
+                else:
+                    logger.error(f"Webhook request failed after {attempt + 1} attempt(s): {e}")
 
     def send_raw(self, payload: Dict[str, Any]) -> None:
         """Send a raw payload to Ondemand (for custom actions)."""
