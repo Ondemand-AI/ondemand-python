@@ -134,6 +134,17 @@ def load_manifest(manifest_path: Union[str, Path] = "manifest.yaml") -> Dict[str
         Manifest as a dictionary
     """
     path = Path(manifest_path)
+    if not path.is_absolute():
+        # Try working directory first, then check common project root markers
+        if not path.exists():
+            # Walk up from this file's location to find the manifest
+            search = Path.cwd()
+            for _ in range(5):
+                candidate = search / manifest_path
+                if candidate.exists():
+                    path = candidate
+                    break
+                search = search.parent
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
@@ -185,7 +196,14 @@ def update_manifest(
         update_manifest(dynamic_steps, parent_step_id="process")
     """
     # Load base manifest
-    manifest = load_manifest(manifest_path)
+    try:
+        manifest = load_manifest(manifest_path)
+    except FileNotFoundError:
+        import os
+        if not os.environ.get("ONDEMAND_JOB_ID"):
+            logger.warning("manifest.yaml not found — skipping manifest update (running locally)")
+            return {"workflow": [s.to_dict() for s in dynamic_steps]}
+        raise
 
     # Convert steps to dict format
     steps_dict = [s.to_dict() for s in dynamic_steps]
