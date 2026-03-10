@@ -558,8 +558,12 @@ class supervised:
             logger.debug(f"Task output directory not found: {task_output_dir}")
             return
 
-        # Upload only this task's artifacts
-        uploaded_files = upload_task_artifacts(task_output_dir, self.run_id, self.task)
+        # Upload only this task's artifacts (excluding console.txt which the
+        # worker uploads after the subprocess finishes, so it has full output
+        # including tracebacks that are printed after this __exit__ returns)
+        uploaded_files = upload_task_artifacts(
+            task_output_dir, self.run_id, self.task, exclude=["console.txt"]
+        )
 
         if not uploaded_files:
             logger.debug(f"No artifacts to upload for task {self.task}")

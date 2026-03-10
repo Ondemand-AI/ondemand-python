@@ -250,6 +250,7 @@ def upload_task_artifacts(
     run_id: str,
     task_name: str,
     prefix: str = "artifacts",
+    exclude: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Upload artifacts from a specific task's output directory to R2.
@@ -261,11 +262,13 @@ def upload_task_artifacts(
         run_id: Run ID
         task_name: Name of the task (used for folder organization)
         prefix: S3 key prefix (default: "artifacts")
+        exclude: List of filenames to skip (e.g., ["console.txt"])
 
     Returns:
         List of uploaded file info dicts
     """
     client = get_r2_client()
+    exclude_set = set(exclude or [])
 
     if not client.is_configured():
         logger.warning("R2 storage not configured. Skipping task artifact upload.")
@@ -281,6 +284,9 @@ def upload_task_artifacts(
     # Walk through all files in the task directory
     for file_path in task_output_dir.rglob("*"):
         if file_path.is_file():
+            if file_path.name in exclude_set:
+                logger.debug(f"Skipping excluded file: {file_path.name}")
+                continue
             # Create relative path from task_output_dir
             relative_path = file_path.relative_to(task_output_dir)
 
