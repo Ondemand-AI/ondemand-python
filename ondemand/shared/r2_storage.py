@@ -100,6 +100,37 @@ class R2StorageClient:
         mime_type, _ = mimetypes.guess_type(str(file_path))
         return mime_type or "application/octet-stream"
 
+    def download_file(
+        self,
+        key: str,
+        dest_path: Path,
+    ) -> Dict[str, Any]:
+        """
+        Download a single file from R2.
+
+        Args:
+            key: S3 key (path in bucket)
+            dest_path: Local path to save the file
+
+        Returns:
+            Dict with download result (key, filename, size)
+        """
+        client = self._get_client()
+
+        dest_path = Path(dest_path)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        client.download_file(self.bucket, key, str(dest_path))
+
+        file_size = dest_path.stat().st_size
+        logger.debug(f"Downloaded r2://{self.bucket}/{key} to {dest_path}")
+
+        return {
+            "key": key,
+            "filename": dest_path.name,
+            "size": file_size,
+        }
+
     def upload_file(
         self,
         file_path: Path,
@@ -317,3 +348,51 @@ def upload_task_artifacts(
         logger.info(f"Successfully uploaded {len(uploaded_files)} artifacts for task '{task_name}'")
 
     return uploaded_files
+
+
+def download_input_files(
+    inputs: Dict[str, Any],
+    dest_dir: Path,
+) -> Dict[str, Path]:
+    """
+    Download all file-type inputs from R2 to a local directory.
+
+    Scans the inputs dict for values that look like R2 storage keys
+    (starting with 'inputs/') and downloads each to dest_dir.
+
+    Args:
+        inputs: The ONDEMAND_INPUTS dict (or subset)
+        dest_dir: Local directory to save downloaded files
+
+    Returns:
+        Dict mapping input key names to their local file paths
+    """
+    client = get_r2_client()
+
+    if not client.is_configured():
+        logger.warning("R2 storage not configured. Cannot download input files.")
+        return {}
+
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    downloaded: Dict[str, Path] = {}
+
+    for key, value in inputs.items():
+        if not isinstance(value, str):
+            continue
+        if not value.startswith("inputs/"):
+            continue
+
+        # Extract original filename from the storage key
+        filename = value.rsplit("/", 1)[-1] if "/" in value else value
+        local_path = dest_dir / filename
+
+        try:
+            result = client.download_file(value, local_path)
+            downloaded[key] = local_path
+            logger.info(f"Downloaded input '{key}': {filename} ({result['size']} bytes)")
+        except Exception as e:
+            logger.error(f"Failed to download input '{key}' from {value}: {e}")
+
+    return downloaded
