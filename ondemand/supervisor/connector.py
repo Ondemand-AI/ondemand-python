@@ -51,6 +51,7 @@ from ondemand.shared import (
     get_exception_summary,
     upload_run_artifacts,
     upload_task_artifacts,
+    upload_root_artifacts,
 )
 
 logger = logging.getLogger(__name__)
@@ -564,6 +565,14 @@ class supervised:
         uploaded_files = upload_task_artifacts(
             task_output_dir, self.run_id, self.task, exclude=["console.txt"]
         )
+
+        # On the last task, also upload root-level files from output/{run_id}/
+        # (e.g., dynamic_manifest.yaml, shared data files between tasks)
+        if self.last_task:
+            root_files = upload_root_artifacts(
+                get_base_output_dir(), self.run_id, exclude=["dynamic_manifest.yaml"]
+            )
+            uploaded_files.extend(root_files)
 
         if not uploaded_files:
             logger.debug(f"No artifacts to upload for task {self.task}")

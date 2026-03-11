@@ -23,6 +23,7 @@ from ondemand.shared.logging import get_logger, configure_logging, OndemandLogge
 from ondemand.shared.r2_storage import (
     upload_run_artifacts,
     upload_task_artifacts,
+    upload_root_artifacts,
     download_input_files,
     get_r2_client,
     R2StorageClient,
@@ -46,6 +47,7 @@ __all__ = [
     # R2 storage
     "upload_run_artifacts",
     "upload_task_artifacts",
+    "upload_root_artifacts",
     "download_input_files",
     "get_r2_client",
     "R2StorageClient",

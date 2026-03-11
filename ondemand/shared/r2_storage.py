@@ -179,6 +179,45 @@ class R2StorageClient:
             "mime_type": mime_type,
         }
 
+    def copy_object(
+        self,
+        source_key: str,
+        dest_key: str,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Copy an object within the same bucket.
+
+        Args:
+            source_key: Source S3 key
+            dest_key: Destination S3 key
+            metadata: Optional new metadata (replaces source metadata if provided)
+
+        Returns:
+            Dict with copy result (source_key, dest_key)
+        """
+        client = self._get_client()
+
+        copy_source = {"Bucket": self.bucket, "Key": source_key}
+        extra_args = {}
+        if metadata:
+            extra_args["Metadata"] = metadata
+            extra_args["MetadataDirective"] = "REPLACE"
+
+        client.copy_object(
+            Bucket=self.bucket,
+            CopySource=copy_source,
+            Key=dest_key,
+            **extra_args,
+        )
+
+        logger.debug(f"Copied r2://{self.bucket}/{source_key} -> {dest_key}")
+
+        return {
+            "source_key": source_key,
+            "dest_key": dest_key,
+        }
+
     def upload_directory(
         self,
         local_dir: Path,
@@ -350,9 +389,78 @@ def upload_task_artifacts(
     return uploaded_files
 
 
+def upload_root_artifacts(
+    base_output_dir: Path,
+    run_id: str,
+    prefix: str = "artifacts",
+    exclude: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Upload files from the root of the run's output directory to R2.
+
+    Only uploads files directly in base_output_dir (not in task subdirectories).
+    This captures shared artifacts like dynamic_manifest.yaml or data files
+    that aren't tied to a specific task.
+
+    Args:
+        base_output_dir: Base output directory (e.g., output/{run_id}/)
+        run_id: Run ID
+        prefix: S3 key prefix (default: "artifacts")
+        exclude: List of filenames to skip
+
+    Returns:
+        List of uploaded file info dicts
+    """
+    client = get_r2_client()
+    exclude_set = set(exclude or [])
+
+    if not client.is_configured():
+        logger.warning("R2 storage not configured. Skipping root artifact upload.")
+        return []
+
+    base_output_dir = Path(base_output_dir)
+    if not base_output_dir.exists():
+        logger.debug(f"Base output directory not found: {base_output_dir}")
+        return []
+
+    uploaded_files = []
+
+    # Only iterate direct children (not recursive) — task subdirs are handled separately
+    for file_path in base_output_dir.iterdir():
+        if not file_path.is_file():
+            continue
+        if file_path.name in exclude_set:
+            logger.debug(f"Skipping excluded file: {file_path.name}")
+            continue
+
+        key = f"{prefix}/{run_id}/{file_path.name}"
+
+        try:
+            result = client.upload_file(
+                file_path,
+                key,
+                metadata={
+                    "run-id": run_id,
+                    "original-path": file_path.name,
+                },
+            )
+            result["folder"] = ""
+            uploaded_files.append(result)
+            logger.info(f"Uploaded root artifact: {key} ({result['size']} bytes)")
+        except Exception as e:
+            logger.error(f"Failed to upload {file_path}: {e}")
+
+    if uploaded_files:
+        logger.info(f"Successfully uploaded {len(uploaded_files)} root artifacts")
+
+    return uploaded_files
+
+
 def download_input_files(
     inputs: Dict[str, Any],
     dest_dir: Path,
+    run_id: Optional[str] = None,
+    artifacts_prefix: str = "artifacts",
 ) -> Dict[str, Path]:
     """
     Download all file-type inputs from R2 to a local directory.
@@ -360,9 +468,15 @@ def download_input_files(
     Scans the inputs dict for values that look like R2 storage keys
     (starting with 'inputs/') and downloads each to dest_dir.
 
+    If run_id is provided, also copies each file to the artifacts folder
+    (artifacts/{run_id}/inputs/{filename}) so they appear in the run's
+    artifacts tab. The temp originals are kept for retry support.
+
     Args:
         inputs: The ONDEMAND_INPUTS dict (or subset)
         dest_dir: Local directory to save downloaded files
+        run_id: Optional run ID for copying files to artifacts
+        artifacts_prefix: R2 key prefix for artifacts (default: "artifacts")
 
     Returns:
         Dict mapping input key names to their local file paths
@@ -392,6 +506,24 @@ def download_input_files(
             result = client.download_file(value, local_path)
             downloaded[key] = local_path
             logger.info(f"Downloaded input '{key}': {filename} ({result['size']} bytes)")
+
+            # Copy to artifacts folder for visibility in the UI
+            if run_id:
+                try:
+                    dest_key = f"{artifacts_prefix}/{run_id}/inputs/{filename}"
+                    client.copy_object(
+                        source_key=value,
+                        dest_key=dest_key,
+                        metadata={
+                            "run-id": run_id,
+                            "input-key": key,
+                            "original-path": filename,
+                        },
+                    )
+                    logger.info(f"Copied input to artifacts: {dest_key}")
+                except Exception as e:
+                    logger.warning(f"Failed to copy input '{key}' to artifacts: {e}")
+
         except Exception as e:
             logger.error(f"Failed to download input '{key}' from {value}: {e}")
 
