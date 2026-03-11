@@ -246,7 +246,11 @@ class OndemandStreamer:
             # Step is starting - parent is current top of stack (if any)
             if _step_stack:
                 parent_step_id = _step_stack[-1]
-            _step_stack.append(step_id)
+            # Skip duplicate push (supervised.__enter__ may have already pushed this)
+            if not _step_stack or _step_stack[-1] != step_id:
+                _step_stack.append(step_id)
+            else:
+                logger.debug(f"Step {step_id} already on top of stack, skipping push")
             logger.debug(f"Step stack after push: {_step_stack}")
         else:
             # Step is ending - find and remove it from stack
@@ -529,6 +533,14 @@ class supervised:
         )
         self._supervise_context.__enter__()
 
+        # Push task onto step stack so child step_scopes resolve their parent
+        # The Thoughtful @step decorator also pushes, but it may fire after
+        # supervised.__enter__ returns, creating a race. Belt-and-suspenders.
+        if self.task:
+            if self.task not in _step_stack:
+                _step_stack.append(self.task)
+                logger.debug(f"Pushed task '{self.task}' onto step stack: {_step_stack}")
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -538,6 +550,11 @@ class supervised:
             task_name = self.task or "unknown"
             record_exception(task_name, exc_type, exc_val, exc_tb)
             logger.info(f"Exception recorded for task '{task_name}': {exc_type.__name__}: {exc_val}")
+
+        # Clean up step stack (remove task if still present)
+        if self.task and self.task in _step_stack:
+            _step_stack.remove(self.task)
+            logger.debug(f"Removed task '{self.task}' from step stack: {_step_stack}")
 
         # Let supervise handle its cleanup first
         try:
