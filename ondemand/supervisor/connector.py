@@ -593,10 +593,12 @@ class supervised:
         )
 
         # On the last task, also upload root-level files from output/{run_id}/
-        # (e.g., dynamic_manifest.yaml, shared data files between tasks)
+        # (e.g., shared data files between tasks)
+        # Exclude dynamic_manifest.yaml (internal) and console.txt (worker uploads per-task)
         if self.last_task:
             root_files = upload_root_artifacts(
-                get_base_output_dir(), self.run_id, exclude=["dynamic_manifest.yaml"]
+                get_base_output_dir(), self.run_id,
+                exclude=["dynamic_manifest.yaml", "console.txt"],
             )
             uploaded_files.extend(root_files)
 
