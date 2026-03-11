@@ -495,6 +495,16 @@ class supervised:
         if self.first_task:
             shared_bus.emit(RunStatusChangeEvent(status=Status.RUNNING))
 
+            # Log git info prominently at the start of the run
+            git_info = get_git_info()
+            if git_info:
+                branch = git_info.get("branch", "?")
+                commit = git_info.get("commit_hash", "?")
+                msg = git_info.get("commit_message", "")
+                logger.info(f"Robot version: {branch} @ {commit} — {msg}")
+            else:
+                logger.warning("Robot version: could not read git info")
+
         # Enter supervise context (always multistep mode - we handle status ourselves)
         self._supervise_context = supervise(
             manifest=manifest,
