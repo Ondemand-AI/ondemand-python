@@ -461,7 +461,7 @@ def download_input_files(
     dest_dir: Path,
     run_id: Optional[str] = None,
     artifacts_prefix: str = "artifacts",
-) -> Dict[str, Path]:
+) -> Dict[str, Any]:
     """
     Download all file-type inputs from R2 to a local directory.
 
@@ -493,38 +493,51 @@ def download_input_files(
     downloaded: Dict[str, Path] = {}
 
     for key, value in inputs.items():
-        if not isinstance(value, str):
+        # Normalize to list of storage keys (supports single string or array)
+        storage_keys: List[str] = []
+        if isinstance(value, str) and value.startswith("inputs/"):
+            storage_keys = [value]
+        elif isinstance(value, list):
+            storage_keys = [v for v in value if isinstance(v, str) and v.startswith("inputs/")]
+
+        if not storage_keys:
             continue
-        if not value.startswith("inputs/"):
-            continue
 
-        # Extract original filename from the storage key
-        filename = value.rsplit("/", 1)[-1] if "/" in value else value
-        local_path = dest_dir / filename
+        downloaded_paths: List[Path] = []
+        for storage_key in storage_keys:
+            # Extract original filename from the storage key
+            filename = storage_key.rsplit("/", 1)[-1] if "/" in storage_key else storage_key
+            local_path = dest_dir / filename
 
-        try:
-            result = client.download_file(value, local_path)
-            downloaded[key] = local_path
-            logger.info(f"Downloaded input '{key}': {filename} ({result['size']} bytes)")
+            try:
+                result = client.download_file(storage_key, local_path)
+                downloaded_paths.append(local_path)
+                logger.info(f"Downloaded input '{key}': {filename} ({result['size']} bytes)")
 
-            # Copy to artifacts folder for visibility in the UI
-            if run_id:
-                try:
-                    dest_key = f"{artifacts_prefix}/{run_id}/inputs/{filename}"
-                    client.copy_object(
-                        source_key=value,
-                        dest_key=dest_key,
-                        metadata={
-                            "run-id": run_id,
-                            "input-key": key,
-                            "original-path": filename,
-                        },
-                    )
-                    logger.info(f"Copied input to artifacts: {dest_key}")
-                except Exception as e:
-                    logger.warning(f"Failed to copy input '{key}' to artifacts: {e}")
+                # Copy to artifacts folder for visibility in the UI
+                if run_id:
+                    try:
+                        dest_key = f"{artifacts_prefix}/{run_id}/inputs/{filename}"
+                        client.copy_object(
+                            source_key=storage_key,
+                            dest_key=dest_key,
+                            metadata={
+                                "run-id": run_id,
+                                "input-key": key,
+                                "original-path": filename,
+                            },
+                        )
+                        logger.info(f"Copied input to artifacts: {dest_key}")
+                    except Exception as e:
+                        logger.warning(f"Failed to copy input '{key}' to artifacts: {e}")
 
-        except Exception as e:
-            logger.error(f"Failed to download input '{key}' from {value}: {e}")
+            except Exception as e:
+                logger.error(f"Failed to download input '{key}' from {storage_key}: {e}")
+
+        # Single file returns Path, multiple files returns list of Paths
+        if len(downloaded_paths) == 1:
+            downloaded[key] = downloaded_paths[0]
+        elif len(downloaded_paths) > 1:
+            downloaded[key] = downloaded_paths  # type: ignore[assignment]
 
     return downloaded
