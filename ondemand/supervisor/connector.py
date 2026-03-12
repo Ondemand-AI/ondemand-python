@@ -74,15 +74,20 @@ def get_git_info() -> Optional[Dict[str, Any]]:
     if _git_info is not None:
         return _git_info
 
+    def _git(*args):
+        """Run a git command with safe.directory=* to avoid ownership issues."""
+        return subprocess.run(
+            ["git", "-c", "safe.directory=*", *args],
+            capture_output=True, text=True, timeout=5,
+        )
+
     try:
         # Get remote URL
-        result = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        result = _git("config", "--get", "remote.origin.url")
         repo_url = result.stdout.strip() if result.returncode == 0 else None
+
+        if not repo_url:
+            logger.debug(f"git config failed: {result.stderr.strip()}")
 
         # Clean up repo URL (remove .git suffix, convert SSH to HTTPS for display)
         if repo_url:
@@ -91,50 +96,28 @@ def get_git_info() -> Optional[Dict[str, Any]]:
             # Convert SSH URL to HTTPS for clickable links
             if repo_url.startswith("git@github.com:"):
                 repo_url = repo_url.replace("git@github.com:", "https://github.com/")
+            # Strip embedded auth tokens from URL for display
+            import re as _re
+            repo_url = _re.sub(r"https://[^@]+@", "https://", repo_url)
 
         # Get current branch
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        result = _git("rev-parse", "--abbrev-ref", "HEAD")
         branch = result.stdout.strip() if result.returncode == 0 else None
 
         # Get current commit hash (short)
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        result = _git("rev-parse", "--short", "HEAD")
         commit_hash = result.stdout.strip() if result.returncode == 0 else None
 
         # Get full commit hash for linking
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        result = _git("rev-parse", "HEAD")
         commit_hash_full = result.stdout.strip() if result.returncode == 0 else None
 
         # Get commit message (first line)
-        result = subprocess.run(
-            ["git", "log", "-1", "--format=%s"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        result = _git("log", "-1", "--format=%s")
         commit_message = result.stdout.strip() if result.returncode == 0 else None
 
         # Get commit author
-        result = subprocess.run(
-            ["git", "log", "-1", "--format=%an"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        result = _git("log", "-1", "--format=%an")
         author = result.stdout.strip() if result.returncode == 0 else None
 
         if repo_url or branch or commit_hash:
@@ -250,6 +233,8 @@ class OndemandStreamer:
             if not _step_stack or _step_stack[-1] != step_id:
                 _step_stack.append(step_id)
             else:
+                # Already on stack via supervised.__enter__ — don't be own parent
+                parent_step_id = _step_stack[-2] if len(_step_stack) > 1 else None
                 logger.debug(f"Step {step_id} already on top of stack, skipping push")
             logger.debug(f"Step stack after push: {_step_stack}")
         else:
