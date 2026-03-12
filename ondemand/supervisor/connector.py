@@ -155,22 +155,6 @@ def get_git_info() -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.debug(f"Could not read .version file: {e}")
 
-    # Fallback 2: read from env vars stamped by the worker
-    env_branch = os.environ.get("ONDEMAND_ROBOT_BRANCH")
-    env_commit = os.environ.get("ONDEMAND_ROBOT_COMMIT")
-    env_msg = os.environ.get("ONDEMAND_ROBOT_COMMIT_MSG")
-    if env_branch or env_commit:
-        _git_info = {
-            "repo_url": None,
-            "branch": env_branch,
-            "commit_hash": env_commit,
-            "commit_hash_full": None,
-            "commit_message": env_msg,
-            "author": None,
-        }
-        logger.info(f"Git info from worker env: {env_branch} @ {env_commit}")
-        return _git_info
-
     return None
 
 
