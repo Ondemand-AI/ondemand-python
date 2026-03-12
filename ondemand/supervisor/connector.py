@@ -43,6 +43,7 @@ from thoughtful.supervisor.reporting.status import Status
 
 from ondemand.shared import (
     parse_args,
+    get_task_position,
     set_run_id,
     get_output_dir,
     get_base_output_dir,
@@ -405,38 +406,31 @@ class supervised:
     Context manager that handles all Ondemand setup and supervise integration.
 
     This is the recommended way to run an Ondemand agent. It:
-    1. Parses CLI arguments (--run-id, --webhook-url) if not provided
-    2. Reads API key from ONDEMAND_API_KEY environment variable
+    1. Parses CLI arguments (--run-id, --webhook-url, --task-order, --task-count)
+    2. Auto-detects first/last task from --task-order/--task-count (set by worker)
     3. Sets up run_id for state isolation
     4. Connects to Ondemand platform (if configured)
     5. Enters the Thoughtful supervise context
-    6. Optionally emits run status on enter/exit based on first_task/last_task flags
+    6. Emits RUNNING on first task enter, SUCCEEDED/FAILED on last task exit
 
     Usage:
         from ondemand import supervised
 
-        # First task - emits RUNNING on enter, uses base manifest
-        with supervised(task="initialize", first_task=True):
+        with supervised(task="initialize"):
             build_dynamic_manifest()
 
-        # Middle task - uses dynamic manifest from previous phase
-        with supervised(task="process", use_dynamic_manifest=True):
+        with supervised(task="process", manifest="dynamic_manifest.yaml"):
             process()
-
-        # Last task - emits SUCCEEDED/FAILED on exit
-        with supervised(task="teardown", use_dynamic_manifest=True, last_task=True):
-            teardown()
 
     Args:
         run_id: Run ID for state isolation (reads from --run-id if not provided)
         webhook_url: Webhook URL for Ondemand reporting (reads from --webhook-url if not provided)
         api_key: API key for webhook authentication (reads from ONDEMAND_API_KEY env var if not provided)
-        manifest: Path to manifest.yaml file (default: "manifest.yaml"), used as fallback
-        task: Task name for output subfolder (e.g., "initialize", "process", "teardown")
-        first_task: If True, emits RUNNING status on enter
-        last_task: If True, emits SUCCEEDED/FAILED status on exit
-        use_dynamic_manifest: If True, looks for dynamic_manifest.yaml in output/{run_id}/ folder.
-                              Falls back to default manifest if not found.
+        manifest: Manifest filename. "manifest.yaml" (default) loads from robot root.
+                  Any other name is resolved from output/{run_id}/ first.
+        task: Task name for output subfolder (e.g., "initialize", "process")
+        first_task: Fallback flag for local dev (auto-detected from --task-order in production)
+        last_task: Fallback flag for local dev (auto-detected from --task-order in production)
     """
 
     def __init__(
@@ -448,13 +442,21 @@ class supervised:
         task: Optional[str] = None,
         first_task: bool = False,
         last_task: bool = False,
-        use_dynamic_manifest: bool = False,
     ):
         self.task = task
-        self.first_task = first_task
-        self.last_task = last_task
-        self.use_dynamic_manifest = use_dynamic_manifest
-        self._default_manifest = manifest
+        self._manifest = manifest
+
+        # Auto-detect first/last task from CLI args passed by the worker.
+        # The worker passes --task-order and --task-count per-subprocess,
+        # so concurrent robots on the same worker don't interfere.
+        task_order, task_count = get_task_position()
+        if task_order is not None and task_count is not None:
+            self.first_task = task_order == 1
+            self.last_task = task_order == task_count
+        else:
+            # Fallback to explicit flags (local dev / standalone execution)
+            self.first_task = first_task
+            self.last_task = last_task
         self._supervise_context = None
 
         # Parse CLI args and env vars if not explicitly provided
@@ -488,17 +490,20 @@ class supervised:
         # Get task-specific output directory
         output_dir = get_output_dir()
 
-        # Resolve manifest path (dynamic manifest is in base run directory)
-        if self.use_dynamic_manifest:
-            dynamic_manifest_path = get_base_output_dir() / "dynamic_manifest.yaml"
-            if dynamic_manifest_path.exists():
-                manifest = str(dynamic_manifest_path)
-                logger.info(f"Using dynamic manifest: {manifest}")
+        # Resolve manifest path.
+        # If manifest != "manifest.yaml", look for it in output/{run_id}/ first
+        # (e.g. "dynamic_manifest.yaml" created by a previous task via update_manifest).
+        # Falls back to robot root if not found in output dir.
+        if self._manifest != "manifest.yaml":
+            runtime_path = get_base_output_dir() / self._manifest
+            if runtime_path.exists():
+                manifest = str(runtime_path)
+                logger.info(f"Using manifest: {manifest}")
             else:
-                manifest = self._default_manifest
-                logger.warning(f"Dynamic manifest not found at {dynamic_manifest_path}, falling back to {manifest}")
+                manifest = self._manifest
+                logger.warning(f"Manifest not found at {runtime_path}, trying {manifest}")
         else:
-            manifest = self._default_manifest
+            manifest = self._manifest
 
         # Log git info at the start of every task
         git_info = get_git_info()
@@ -641,52 +646,44 @@ class supervised:
 
 def supervised_step(
     step_name: str,
-    first_task: bool = False,
-    last_task: bool = False,
-    use_dynamic_manifest: bool = False,
+    manifest: str = "manifest.yaml",
 ) -> Callable:
     """
     Decorator that combines supervised() context and @step decorator.
 
-    This is the recommended way to define steps in an Ondemand agent. It:
-    1. Creates a supervised() context with the step name as the output folder
-    2. Wraps the function with thoughtful's @step decorator
-    3. Handles run status emission based on first_task/last_task flags
+    First/last task detection is automatic — the worker passes --task-order
+    and --task-count CLI args to each subprocess so the library knows which
+    task emits RUNNING (first) and SUCCEEDED/FAILED (last).
+
+    For tasks that need a manifest created at runtime by a previous task,
+    pass the filename via manifest param — the library resolves it from
+    output/{run_id}/ at runtime.
 
     Usage:
         from ondemand import supervised_step
 
         class Dora:
-            @supervised_step("Initialize", first_task=True)
+            @supervised_step("Coleta de Extratos")
             def initialize_dora(self):
-                # Output goes to: output/{run_id}/Initialize/
+                # Uses manifest.yaml from robot root
                 ...
 
-            @supervised_step("Process", use_dynamic_manifest=True)
+            @supervised_step("Processamento de Dados", manifest="dynamic_manifest.yaml")
             def process_dora(self):
-                # Output goes to: output/{run_id}/Process/
-                ...
-
-            @supervised_step("Teardown", use_dynamic_manifest=True, last_task=True)
-            def teardown_dora(self):
-                # Output goes to: output/{run_id}/Teardown/
-                # Emits SUCCEEDED/FAILED on exit
+                # Resolves from output/{run_id}/dynamic_manifest.yaml
                 ...
 
     Args:
         step_name: Name of the step (used for both @step decorator and output folder)
-        first_task: If True, emits RUNNING status on enter
-        last_task: If True, emits SUCCEEDED/FAILED status on exit
-        use_dynamic_manifest: If True, looks for dynamic_manifest.yaml in output/{run_id}/ folder
+        manifest: Manifest filename. "manifest.yaml" (default) loads from robot root.
+                  Any other name is resolved from output/{run_id}/ first.
     """
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             with supervised(
                 task=step_name,
-                first_task=first_task,
-                last_task=last_task,
-                use_dynamic_manifest=use_dynamic_manifest,
+                manifest=manifest,
             ):
                 # Wrap with thoughtful's @step decorator
                 stepped_func = step(step_name)(func)

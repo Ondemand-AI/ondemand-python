@@ -18,7 +18,7 @@ from ondemand.shared.artifacts import (
     save_state,
     load_state,
 )
-from ondemand.shared.cli import parse_args
+from ondemand.shared.cli import parse_args, get_task_position
 from ondemand.shared.logging import get_logger, configure_logging, OndemandLogger
 from ondemand.shared.r2_storage import (
     upload_run_artifacts,
@@ -39,6 +39,7 @@ __all__ = [
     "set_current_task",
     "get_current_task",
     "parse_args",
+    "get_task_position",
     # Exception tracking
     "record_exception",
     "has_recorded_exceptions",

@@ -38,6 +38,8 @@ DEFAULT_APP_URL = "https://app.ondemand-ai.com.br"
 # Cache for parsed inputs (avoid re-parsing)
 _cached_inputs: Optional[Dict[str, Any]] = None
 _cached_run_id: Optional[str] = None
+_cached_task_order: Optional[int] = None
+_cached_task_count: Optional[int] = None
 
 
 def parse_args() -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -53,7 +55,7 @@ def parse_args() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     Returns:
         Tuple of (run_id, webhook_url, api_key) - all may be None for standalone mode
     """
-    global _cached_run_id
+    global _cached_run_id, _cached_task_order, _cached_task_count
 
     parser = argparse.ArgumentParser(
         description="Ondemand Agent",
@@ -82,6 +84,20 @@ def parse_args() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     )
 
     parser.add_argument(
+        "--task-order",
+        type=int,
+        default=None,
+        help="1-based position of this task in the execution sequence (set by worker)",
+    )
+
+    parser.add_argument(
+        "--task-count",
+        type=int,
+        default=None,
+        help="Total number of tasks in the execution sequence (set by worker)",
+    )
+
+    parser.add_argument(
         "--inputs",
         type=str,
         default=None,
@@ -101,6 +117,10 @@ def parse_args() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     run_id = args.run_id
     _cached_run_id = run_id
 
+    # Cache task position for auto-detection of first/last task
+    _cached_task_order = args.task_order
+    _cached_task_count = args.task_count
+
     # Get api_key from CLI or env (static, same for all runs)
     api_key = args.api_key or os.environ.get("SUPERVISOR_WEBHOOK_SECRET")
 
@@ -115,6 +135,11 @@ def parse_args() -> Tuple[Optional[str], Optional[str], Optional[str]]:
         _parse_and_cache_inputs(args.inputs, args.inputs_file, run_id)
 
     return run_id, webhook_url, api_key
+
+
+def get_task_position() -> Tuple[Optional[int], Optional[int]]:
+    """Return (task_order, task_count) from CLI args. Both None in standalone mode."""
+    return _cached_task_order, _cached_task_count
 
 
 def get_inputs(save_to_file: bool = True) -> Dict[str, Any]:
