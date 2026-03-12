@@ -566,8 +566,9 @@ class supervised:
                     shared_bus.emit(RunStatusChangeEvent(status=Status.SUCCEEDED, status_message="Run completed successfully"))
                     logger.info("Run status: SUCCEEDED (last_task)")
 
-                # Clean up local artifacts after final task
-                self._cleanup_run_artifacts()
+                # Note: cleanup is handled by the worker after console.txt upload.
+                # Do NOT clean up here — the subprocess exits before the worker
+                # can backup/upload console.txt.
 
         # Don't suppress exceptions
         return False
