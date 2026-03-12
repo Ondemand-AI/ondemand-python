@@ -23,6 +23,7 @@ import os
 import shutil
 import subprocess
 import time
+from pathlib import Path
 import requests
 from typing import Optional, Any, Dict, Callable
 
@@ -135,7 +136,26 @@ def get_git_info() -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.debug(f"Could not get git info from git commands: {e}")
 
-    # Fallback: read from env vars stamped by the worker
+    # Fallback 1: read .version file stamped by CI/CD during robot packaging
+    try:
+        import json as _json
+        version_file = Path(".version")
+        if version_file.exists():
+            v = _json.loads(version_file.read_text())
+            _git_info = {
+                "repo_url": v.get("repo_url"),
+                "branch": v.get("branch"),
+                "commit_hash": v.get("commit", "")[:12] if v.get("commit") else None,
+                "commit_hash_full": v.get("commit_full"),
+                "commit_message": v.get("message"),
+                "author": None,
+            }
+            logger.info(f"Git info from .version: {_git_info['branch']} @ {_git_info['commit_hash']}")
+            return _git_info
+    except Exception as e:
+        logger.debug(f"Could not read .version file: {e}")
+
+    # Fallback 2: read from env vars stamped by the worker
     env_branch = os.environ.get("ONDEMAND_ROBOT_BRANCH")
     env_commit = os.environ.get("ONDEMAND_ROBOT_COMMIT")
     env_msg = os.environ.get("ONDEMAND_ROBOT_COMMIT_MSG")
