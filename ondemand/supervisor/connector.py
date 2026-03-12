@@ -604,13 +604,20 @@ class supervised:
             task_output_dir, self.run_id, self.task, exclude=["console.txt"]
         )
 
-        # On the last task, also upload root-level files from output/{run_id}/
-        # (e.g., shared data files between tasks)
-        # Exclude dynamic_manifest.yaml (internal) and console.txt (worker uploads per-task)
+        # On the last task, also upload shared files from output/{run_id}/
+        # (e.g., downloaded inputs, MMC data, user-uploaded files)
+        # Skip task output dirs (already uploaded by each task's _upload_task_artifacts)
         if self.last_task:
+            base_dir = get_base_output_dir()
+            # Task output dirs contain run-report-*.json from Thoughtful
+            task_dirs = {
+                d.name for d in base_dir.iterdir()
+                if d.is_dir() and any(d.glob("run-report-*.json"))
+            }
             root_files = upload_root_artifacts(
-                get_base_output_dir(), self.run_id,
+                base_dir, self.run_id,
                 exclude=["dynamic_manifest.yaml", "console.txt"],
+                skip_subdirs=task_dirs,
             )
             uploaded_files.extend(root_files)
 

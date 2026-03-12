@@ -394,25 +394,29 @@ def upload_root_artifacts(
     run_id: str,
     prefix: str = "artifacts",
     exclude: Optional[List[str]] = None,
+    skip_subdirs: Optional[set] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Upload files from the root of the run's output directory to R2.
+    Upload shared files from the run's output directory to R2.
 
-    Only uploads files directly in base_output_dir (not in task subdirectories).
-    This captures shared artifacts like dynamic_manifest.yaml or data files
-    that aren't tied to a specific task.
+    Recursively walks base_output_dir, uploading all files except those
+    in task output directories (already uploaded by upload_task_artifacts)
+    and excluded filenames.
 
     Args:
         base_output_dir: Base output directory (e.g., output/{run_id}/)
         run_id: Run ID
         prefix: S3 key prefix (default: "artifacts")
         exclude: List of filenames to skip
+        skip_subdirs: Set of immediate subdirectory names to skip
+                      (e.g., task output dirs already uploaded separately)
 
     Returns:
         List of uploaded file info dicts
     """
     client = get_r2_client()
     exclude_set = set(exclude or [])
+    skip_set = skip_subdirs or set()
 
     if not client.is_configured():
         logger.warning("R2 storage not configured. Skipping root artifact upload.")
@@ -425,15 +429,18 @@ def upload_root_artifacts(
 
     uploaded_files = []
 
-    # Only iterate direct children (not recursive) — task subdirs are handled separately
-    for file_path in base_output_dir.iterdir():
+    for file_path in base_output_dir.rglob("*"):
         if not file_path.is_file():
             continue
         if file_path.name in exclude_set:
-            logger.debug(f"Skipping excluded file: {file_path.name}")
             continue
 
-        key = f"{prefix}/{run_id}/{file_path.name}"
+        # Skip files inside task output directories (uploaded separately)
+        relative = file_path.relative_to(base_output_dir)
+        if len(relative.parts) > 1 and relative.parts[0] in skip_set:
+            continue
+
+        key = f"{prefix}/{run_id}/{relative}".replace("\\", "/")
 
         try:
             result = client.upload_file(
@@ -441,10 +448,14 @@ def upload_root_artifacts(
                 key,
                 metadata={
                     "run-id": run_id,
-                    "original-path": file_path.name,
+                    "original-path": str(relative),
                 },
             )
-            result["folder"] = ""
+            # Folder for UI display
+            if relative.parent != Path("."):
+                result["folder"] = str(relative.parent).replace("\\", "/")
+            else:
+                result["folder"] = ""
             uploaded_files.append(result)
             logger.info(f"Uploaded root artifact: {key} ({result['size']} bytes)")
         except Exception as e:
