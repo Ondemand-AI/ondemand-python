@@ -53,7 +53,6 @@ from ondemand.shared import (
     get_exception_summary,
     upload_run_artifacts,
     upload_task_artifacts,
-    upload_root_artifacts,
 )
 
 logger = logging.getLogger(__name__)
@@ -603,23 +602,6 @@ class supervised:
         uploaded_files = upload_task_artifacts(
             task_output_dir, self.run_id, self.task, exclude=["console.txt"]
         )
-
-        # On the last task, also upload shared files from output/{run_id}/
-        # (e.g., downloaded inputs, MMC data, user-uploaded files)
-        # Skip task output dirs (already uploaded by each task's _upload_task_artifacts)
-        if self.last_task:
-            base_dir = get_base_output_dir()
-            # Task output dirs contain run-report-*.json from Thoughtful
-            task_dirs = {
-                d.name for d in base_dir.iterdir()
-                if d.is_dir() and any(d.glob("run-report-*.json"))
-            }
-            root_files = upload_root_artifacts(
-                base_dir, self.run_id,
-                exclude=["dynamic_manifest.yaml", "console.txt"],
-                skip_subdirs=task_dirs,
-            )
-            uploaded_files.extend(root_files)
 
         if not uploaded_files:
             logger.debug(f"No artifacts to upload for task {self.task}")
