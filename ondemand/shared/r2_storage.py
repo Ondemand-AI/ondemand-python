@@ -503,13 +503,16 @@ def download_input_files(
 
     downloaded: Dict[str, Path] = {}
 
+    def _is_storage_key(v):
+        return isinstance(v, str) and (v.startswith("inputs/") or v.startswith("scheduled-inputs/"))
+
     for key, value in inputs.items():
         # Normalize to list of storage keys (supports single string or array)
         storage_keys: List[str] = []
-        if isinstance(value, str) and value.startswith("inputs/"):
+        if _is_storage_key(value):
             storage_keys = [value]
         elif isinstance(value, list):
-            storage_keys = [v for v in value if isinstance(v, str) and v.startswith("inputs/")]
+            storage_keys = [v for v in value if _is_storage_key(v)]
 
         if not storage_keys:
             continue
