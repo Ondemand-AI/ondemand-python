@@ -446,6 +446,13 @@ class supervised:
         self.task = task
         self._manifest = manifest
 
+        # Parse CLI args FIRST so that get_task_position() has cached values
+        if run_id is None or webhook_url is None or api_key is None:
+            cli_run_id, cli_webhook_url, cli_api_key = parse_args()
+            run_id = run_id or cli_run_id
+            webhook_url = webhook_url or cli_webhook_url
+            api_key = api_key or cli_api_key
+
         # Auto-detect first/last task from CLI args passed by the worker.
         # The worker passes --task-order and --task-count per-subprocess,
         # so concurrent robots on the same worker don't interfere.
@@ -458,13 +465,6 @@ class supervised:
             self.first_task = first_task
             self.last_task = last_task
         self._supervise_context = None
-
-        # Parse CLI args and env vars if not explicitly provided
-        if run_id is None or webhook_url is None or api_key is None:
-            cli_run_id, cli_webhook_url, cli_api_key = parse_args()
-            run_id = run_id or cli_run_id
-            webhook_url = webhook_url or cli_webhook_url
-            api_key = api_key or cli_api_key
 
         # Set up state isolation (must be done before get_output_dir)
         if run_id:
