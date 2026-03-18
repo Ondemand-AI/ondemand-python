@@ -59,6 +59,9 @@ from .supervisor import (
     ManifestStep,
 )
 
+# HITL approval
+from .shared.approval import request_approval, ApprovalRequestError
+
 __all__ = [
     # Main entry points
     "supervised",
@@ -70,4 +73,7 @@ __all__ = [
     "build_manifest_step",
     "update_manifest",
     "ManifestStep",
+    # HITL approval
+    "request_approval",
+    "ApprovalRequestError",
 ]
