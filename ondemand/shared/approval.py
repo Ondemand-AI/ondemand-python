@@ -44,6 +44,7 @@ def request_approval(
     data: Optional[Dict[str, Any]] = None,
     show_buttons: bool = True,
     step_name: Optional[str] = None,
+    timeout_days: int = 7,
 ) -> Tuple[str, str]:
     """
     Request human approval before continuing the workflow.
@@ -63,6 +64,7 @@ def request_approval(
         show_buttons: If True, the portal UI shows approve/reject buttons
                       inline. If False, only the external links work.
         step_name: Step name (auto-detected from current task if not provided).
+        timeout_days: How many days to wait for approval before timing out (default: 7).
 
     Returns:
         Tuple of (approval_url, rejection_url).
@@ -97,6 +99,7 @@ def request_approval(
             "data": data or {},
             "show_buttons": show_buttons,
             "step_name": step_name,
+            "timeout_days": timeout_days,
         },
     }
 
