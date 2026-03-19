@@ -1,202 +1,162 @@
 # Ondemand Python Library
 
-Python library for building automation agents on the Ondemand platform.
+Python library for building automation agents on the Ondemand platform. Provides step supervision, input handling, artifact management, R2 storage, and **HITL approval requests**.
 
 ## Installation
 
-### From GitHub (Private)
+### For RCC Robots (Production)
+
+Robots use the `install_private_packages.py` shim in `bin/` which installs the library at runtime using `GITHUB_TOKEN`. See `robo-demo` for the pattern.
+
+### Local Development
 
 ```bash
-# Using pip with GitHub token
-pip install git+https://${GITHUB_TOKEN}@github.com/Ondemand-AI/ondemand-python.git@main
+# Via SSH (recommended)
+pip install git+ssh://git@github.com/Ondemand-AI/ondemand-python.git@main
 
-# Or in requirements.txt
-git+https://${GITHUB_TOKEN}@github.com/Ondemand-AI/ondemand-python.git@main
+# Or install locally in editable mode
+git clone git@github.com:Ondemand-AI/ondemand-python.git
+cd ondemand-python
+pip install -e .
 ```
 
-### For RCC Robots
+## Core Features
 
-Add to your `conda.yaml`:
-```yaml
-dependencies:
-  - python=3.10
-  - pip=23.0
-  - pip:
-      - git+https://${GITHUB_TOKEN}@github.com/Ondemand-AI/ondemand-python.git@main
-```
-
-Or use the install shim pattern (see robo-demo for example).
-
-## Usage
-
-### Getting Run Inputs
+### 1. Supervised Steps (`@supervised_step`)
 
 ```python
-from ondemand.shared.cli import get_inputs
+from ondemand import supervised_step
 
-# Get inputs (automatically saved to output/inputs_received_{run_id}.json for auditing)
-inputs = get_inputs()
-
-# Access individual parameters
-empresa = inputs.get("empresa", "Default Corp")
-competencia = inputs.get("competencia", "2024-01")
-cnpj = inputs.get("cnpj")
+@supervised_step("Processamento de Dados")
+def process(self):
+    # Your automation logic here
+    # Step reporting, artifact upload, and error handling are automatic
+    pass
 ```
 
-### Reporting Status
+### 2. Getting Inputs
 
 ```python
-from ondemand.supervisor import Supervisor
+from ondemand.shared import get_inputs
 
-# Initialize supervisor (automatically gets run_id from CLI args)
-supervisor = Supervisor()
-
-# Report progress
-supervisor.report_step("extracting", "Extraindo dados do portal...")
-supervisor.report_step("processing", "Processando 150 notas fiscais...")
-
-# Report completion
-supervisor.complete(outputs={"total_processed": 150})
-
-# Or report failure
-supervisor.fail("Erro ao acessar portal: timeout")
+inputs = get_inputs()  # Parses ONDEMAND_INPUTS JSON env var
+empresa = inputs.get("empresa")
+periodo = inputs.get("periodo")
+input_files = inputs.get("input_file")  # Can be a list of R2 keys
 ```
 
-### Full Example (process.py)
+### 3. Artifacts
 
 ```python
-from ondemand.shared.cli import get_inputs, parse_args
-from ondemand.supervisor import Supervisor
+from ondemand.shared import save_artifact, load_artifact
 
-def main():
-    # Parse CLI args (gets run_id, webhook_url, api_key)
-    run_id, webhook_url, api_key = parse_args()
+# Save artifact (to output/{run_id}/{task_name}/)
+save_artifact({"companies": data})
 
-    # Get inputs (saved to file for auditing)
-    inputs = get_inputs()
-
-    # Initialize supervisor for status reporting
-    supervisor = Supervisor()
-
-    try:
-        supervisor.report_step("starting", "Iniciando processamento...")
-
-        # Your automation logic here
-        empresa = inputs.get("empresa")
-        competencia = inputs.get("competencia")
-
-        # ... do work ...
-
-        supervisor.complete(outputs={"status": "success"})
-
-    except Exception as e:
-        supervisor.fail(str(e))
-        raise
-
-if __name__ == "__main__":
-    main()
+# Load artifact from another task
+state = load_artifact(task="Iniciar Coleta")
 ```
 
-## Local Testing
+### 4. R2 File Downloads
 
-You can test your robot locally without the full worker setup:
+```python
+from ondemand.shared import download_input_files
 
-### Using Inline JSON
-
-```bash
-python src/process.py --inputs '{"empresa": "Test Corp", "competencia": "2024-01"}'
+# Downloads all R2-keyed inputs to a local directory
+downloaded = download_input_files(inputs, dest_dir=Path("./downloads"))
 ```
 
-### Using Input File
+### 5. HITL Approvals (`request_approval`)
 
-Create `test_inputs.json`:
-```json
-{
-  "empresa": "Test Corp",
-  "competencia": "2024-01",
-  "cnpj": "12345678000199"
-}
+Pause execution and wait for human approval before continuing.
+
+```python
+from ondemand import request_approval
+
+# Request approval — returns URLs for approve/reject
+approval_url, rejection_url = request_approval(
+    message="3 divergências encontradas. Revisar?",
+    data={"total": 15000, "empresas": ["ABC Corp", "XYZ Inc"]},
+    show_buttons=True,     # Show buttons in portal UI
+    timeout_days=7,        # Max wait time (default: 7)
+)
+
+# Developer sends notification however they want
+logger.info(f"Approval: {approval_url}")
+logger.info(f"Rejection: {rejection_url}")
+send_email(to="reviewer@client.com", body=f"Approve: {approval_url}")
 ```
 
-Run:
-```bash
-python src/process.py --inputs-file test_inputs.json
-```
+**Behavior:**
+- `request_approval()` is synchronous — sends webhook to portal, gets URLs back
+- After calling, the step should exit normally (artifacts are uploaded)
+- The Temporal workflow pauses automatically (worker slot is freed)
+- If approved → next task executes
+- If rejected → remaining steps cancelled, run completes successfully
+- If timeout → run status becomes `timed_out`, approval auto-rejected
 
-### With RCC
+**Raises `ApprovalRequestError`** if the portal is unreachable after 3 retries.
 
-```bash
-rcc task run --task Process -- --inputs '{"empresa": "Test"}'
+### 6. Dynamic Manifests
+
+```python
+from ondemand import build_manifest_step, update_manifest
+
+steps = [
+    build_manifest_step("company_a", "Process Company A", children=[
+        build_manifest_step("company_a_extract", "Extract Data"),
+        build_manifest_step("company_a_validate", "Validate Data"),
+    ])
+]
+update_manifest(steps, parent_step_id="Processing")
 ```
 
 ## Input Sources (Priority)
 
-1. **CLI `--inputs`** - JSON string (for local testing)
-2. **CLI `--inputs-file`** - Path to JSON file (for local testing)
-3. **`ONDEMAND_INPUTS` env var** - Set by worker in production
+1. **CLI `--inputs`** — JSON string (local testing)
+2. **CLI `--inputs-file`** — Path to JSON file (local testing)
+3. **`ONDEMAND_INPUTS` env var** — Set by worker in production (JSON string)
 
-## Auditing
+> **Note:** Inputs are NOT individual env vars. They come as a single JSON string in `ONDEMAND_INPUTS`.
 
-Inputs are automatically saved to `output/inputs_received_{run_id}.json`:
+## Environment Variables (Set by Worker)
 
-```json
-{
-  "run_id": "abc123",
-  "received_at": "2024-01-15T10:30:00Z",
-  "inputs": {
-    "empresa": "Test Corp",
-    "competencia": "2024-01"
-  }
-}
+| Variable | Description |
+|---|---|
+| `ONDEMAND_RUN_ID` | Current run UUID |
+| `ONDEMAND_INPUTS` | JSON string with all user inputs |
+| `ONDEMAND_WEBHOOK_URL` | Webhook URL for reporting progress |
+| `ONDEMAND_WEBHOOK_SECRET` | Auth secret for webhooks |
+| `GITHUB_TOKEN` | For private package installation |
+| `R2_ENDPOINT`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET` | R2 storage credentials |
+| `BW_*` | Bitwarden vault credentials (per-org) |
+
+## Local Testing
+
+```bash
+# With inline inputs
+python src/process.py --inputs '{"empresa": "Test", "periodo": "2024-01"}'
+
+# With input file
+python src/process.py --inputs-file test_inputs.json
+
+# With RCC
+rcc task run --task Process -- --inputs '{"empresa": "Test"}'
 ```
-
-## Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `ONDEMAND_API_KEY` | API key for webhook authentication | Yes (in production) |
-| `ONDEMAND_APP_URL` | Base URL for app (default: `https://app.ondemand-ai.com.br`) | No |
-| `ONDEMAND_INPUTS` | JSON inputs from worker | Set by worker |
-
-## CLI Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `--run-id` | Run ID (passed by worker, required for status reporting) |
-| `--inputs` | JSON string with inputs (for local testing) |
-| `--inputs-file` | Path to JSON file with inputs (for local testing) |
-| `--webhook-url` | Override webhook URL (optional) |
-| `--api-key` | Override API key (optional) |
 
 ## Package Structure
 
 ```
 ondemand/
-├── __init__.py
+├── __init__.py              # Top-level exports (supervised_step, request_approval, etc.)
 ├── shared/
-│   ├── __init__.py
-│   └── cli.py          # CLI parsing and input retrieval
-├── supervisor/
-│   ├── __init__.py
-│   └── connector.py    # Status reporting to portal
-└── utils/
-    └── ...             # Utility functions
+│   ├── __init__.py          # Shared exports
+│   ├── approval.py          # request_approval() for HITL
+│   ├── artifacts.py         # save_artifact, load_artifact, output dirs
+│   ├── cli.py               # CLI parsing, get_inputs()
+│   ├── logging.py           # OndemandLogger
+│   └── r2_storage.py        # R2 client, download_input_files, upload
+└── supervisor/
+    ├── __init__.py           # Supervisor exports
+    └── connector.py          # @supervised_step decorator, webhook reporting
 ```
-
-## Development
-
-```bash
-# Clone repo
-git clone https://github.com/Ondemand-AI/ondemand-python.git
-cd ondemand-python
-
-# Install in development mode
-pip install -e .
-
-# Run tests
-pytest
-```
-
-## Version History
-
-- **0.1.0** - Initial release with CLI parsing, input retrieval, and supervisor reporting
