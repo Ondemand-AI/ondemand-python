@@ -1,7 +1,7 @@
 """
 Ondemand Platform Connector
 
-Connects the Thoughtful supervisor library to the Ondemand platform via webhooks.
+Connects the supervisor to the Ondemand platform via webhooks.
 
 This module provides:
 - OndemandStreamer: Streams supervisor events to Ondemand webhooks
@@ -27,19 +27,14 @@ from pathlib import Path
 import requests
 from typing import Optional, Any, Dict, Callable
 
-# Suppress verbose "emit event" logs from thoughtful's event_bus.py
-# The thoughtful package incorrectly imports logger from Python's venv module
-# and logs every event at INFO level, cluttering console output
-logging.getLogger("venv").setLevel(logging.WARNING)
-
-from thoughtful.supervisor import shared_bus, supervise, step
-from thoughtful.supervisor.event_bus import (
+from ondemand.supervisor.default_instances import shared_bus, supervise, step
+from ondemand.supervisor.event_bus import (
     Event,
     StepReportChangeEvent,
     RunStatusChangeEvent,
     NewManifestEvent,
 )
-from thoughtful.supervisor.reporting.status import Status
+from ondemand.supervisor.reporting.status import Status
 
 from ondemand.shared import (
     parse_args,
@@ -291,7 +286,7 @@ class OndemandStreamer:
 
     def _handle_status_change(self, event: RunStatusChangeEvent) -> None:
         """Send run status change to Ondemand."""
-        # Map Thoughtful Status enum values (lowercase) to Ondemand webhook status
+        # Map supervisor Status enum values (lowercase) to Ondemand webhook status
         status_map = {
             "running": "processing",
             "succeeded": "finished",
@@ -409,7 +404,7 @@ class supervised:
     2. Auto-detects first/last task from --task-order/--task-count (set by worker)
     3. Sets up run_id for state isolation
     4. Connects to Ondemand platform (if configured)
-    5. Enters the Thoughtful supervise context
+    5. Enters the supervisor supervise context
     6. Emits RUNNING on first task enter, SUCCEEDED/FAILED on last task exit
 
     Usage:
@@ -475,7 +470,7 @@ class supervised:
         self.api_key = api_key
 
     def __enter__(self):
-        # Suppress thoughtful's S3 artifact upload warning
+        # Suppress supervisor's S3 artifact upload warning
         # We handle artifact upload ourselves via R2
         if not os.environ.get("ROBOCORP_HOME"):
             os.environ["ROBOCORP_HOME"] = "/tmp/robocorp"
@@ -527,7 +522,7 @@ class supervised:
         self._supervise_context.__enter__()
 
         # Push task onto step stack so child step_scopes resolve their parent
-        # The Thoughtful @step decorator also pushes, but it may fire after
+        # The supervisor @step decorator also pushes, but it may fire after
         # supervised.__enter__ returns, creating a race. Belt-and-suspenders.
         if self.task:
             if self.task not in _step_stack:
@@ -674,7 +669,7 @@ def supervised_step(
                 task=step_name,
                 manifest=manifest,
             ):
-                # Wrap with thoughtful's @step decorator
+                # Wrap with supervisor's @step decorator
                 stepped_func = step(step_name)(func)
                 return stepped_func(*args, **kwargs)
         return wrapper

@@ -1,54 +1,17 @@
 """
-Ondemand Supervisor Integration
+Ondemand Supervisor
 
-This module provides the connection between Thoughtful's supervisor library
-and the Ondemand platform, enabling:
+Provides step tracking, run reporting, status streaming, and HITL approvals
+for automation agents on the Ondemand platform.
 
-1. **Automatic Webhook Streaming**: Step status updates sent to Ondemand in real-time
-2. **Dynamic Manifests**: Build step hierarchies based on runtime data
-3. **Simplified Setup**: The `supervised()` context manager handles all boilerplate
+Quick Start::
 
-Quick Start:
-    from ondemand.supervisor import supervised
+    from ondemand.supervisor import supervised_step, step_scope, Status
 
-    with supervised():
-        initialize()
-        process()
-        teardown()
-
-The supervised() context manager automatically:
-- Parses CLI arguments (--run-id, --webhook-url)
-- Sets up state isolation per run
-- Connects to Ondemand platform for real-time reporting
-- Enters Thoughtful's supervise context
-
-Dynamic Manifests:
-    from ondemand.supervisor import build_manifest_step, update_manifest
-
-    # Build steps based on discovered data
-    dynamic_steps = []
-    for company in companies:
-        step = build_manifest_step(
-            step_id=company["id"],
-            title=f"Process {company['name']}",
-            children=[
-                build_manifest_step(f"{company['id']}_extract", "Extract Data"),
-                build_manifest_step(f"{company['id']}_validate", "Validate"),
-            ]
-        )
-        dynamic_steps.append(step)
-
-    # Update manifest and send to Ondemand UI
-    update_manifest(dynamic_steps, parent_step_id="Process")
-
-Components:
-    - supervised(): Context manager for running Ondemand agents
-    - connect_to_ondemand(): Connect supervisor to the platform
-    - send_manifest(): Send manifest updates to Ondemand
-    - build_manifest_step(): Build a manifest step object
-    - update_manifest(): Update manifest with dynamic steps
-    - ManifestStep: Dataclass representing a workflow step
-    - OndemandStreamer: Low-level webhook event handler
+    @supervised_step("Process Data")
+    def process(self):
+        with step_scope("Company A") as s:
+            s.set_record_status(status=Status.SUCCEEDED, record_id="rec-1")
 """
 
 from .connector import (
@@ -60,7 +23,22 @@ from .connector import (
     OndemandStreamer,
 )
 
+from .default_instances import (
+    shared_bus,
+    supervise,
+    step,
+    step_scope,
+    report_builder,
+    fail_step,
+    set_step_status,
+    set_record_status,
+    set_run_status,
+    set_on_step_enter_callback,
+    set_on_step_exit_callback,
+)
+
 from .manifest import (
+    Manifest,
     build_manifest_step,
     update_manifest,
     load_manifest,
@@ -68,16 +46,33 @@ from .manifest import (
     ManifestStep,
 )
 
+from .reporting.status import Status
+
 __all__ = [
     # Main entry points
     "supervised",
     "supervised_step",
+    "supervise",
+    "step",
+    "step_scope",
+    # Status
+    "Status",
     # Connection
     "connect_to_ondemand",
     "send_manifest",
     "get_streamer",
     "OndemandStreamer",
-    # Manifest helpers
+    # Report
+    "shared_bus",
+    "report_builder",
+    "fail_step",
+    "set_step_status",
+    "set_record_status",
+    "set_run_status",
+    "set_on_step_enter_callback",
+    "set_on_step_exit_callback",
+    # Manifest
+    "Manifest",
     "build_manifest_step",
     "update_manifest",
     "load_manifest",

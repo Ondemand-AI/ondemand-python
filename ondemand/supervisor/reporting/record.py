@@ -49,7 +49,6 @@ class Record:
             "metadata": self.metadata,
         }
 
-    # Backward compatibility
     __json__ = to_dict
 
 

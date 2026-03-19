@@ -24,18 +24,115 @@ Usage:
     update_manifest(dynamic_steps, parent_step_id="Process")
 """
 
+import json
 import logging
+import pathlib
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
 from dataclasses import dataclass, field
 
+import pydantic
 import yaml
+from pydantic import BaseModel, field_validator
 
-from .connector import send_manifest
 from ..shared import get_base_output_dir
 
 logger = logging.getLogger(__name__)
 DYNAMIC_MANIFEST = 'dynamic_manifest.yaml'
+
+StepId = str
+
+
+
+class RecordStatusColumns(BaseModel):
+    """Custom column labels for record statuses in the UI."""
+    succeeded: Optional[str] = None
+    failed: Optional[str] = None
+    warning: Optional[str] = None
+
+    def __json__(self):
+        return {k: v for k, v in self.model_dump().items() if v is not None}
+
+
+class Step(BaseModel):
+    """A single step in the manifest workflow tree."""
+    step_id: str
+    title: str
+    description: Optional[str] = None
+    columns: Optional[RecordStatusColumns] = None
+    steps: Optional[List["Step"]] = None
+
+    @field_validator("steps", mode="before")
+    @classmethod
+    def ensure_steps_list(cls, v):
+        return v or []
+
+    def __json__(self):
+        return {
+            "step_id": self.step_id,
+            "title": self.title,
+            "description": self.description,
+            "steps": [s.__json__() for s in (self.steps or [])],
+            "columns": self.columns.__json__() if self.columns else self.columns,
+        }
+
+
+class Manifest(BaseModel):
+    """A workflow manifest, typically loaded from manifest.yaml.
+
+    Defines the step hierarchy for progress tracking in the UI.
+    """
+    uid: str
+    name: str
+    description: Optional[str] = None
+    author: Optional[str] = None
+    source: str = ""
+    version: Optional[str] = None
+    columns: Optional[RecordStatusColumns] = None
+    workflow: List[Step] = []
+
+    @classmethod
+    def from_file(cls, filename: Union[str, pathlib.Path]) -> "Manifest":
+        """Load a Manifest from a YAML file."""
+        try:
+            with open(filename) as f:
+                data = yaml.safe_load(f)
+            manifest = cls.model_validate(data)
+            manifest.workflow = cls._load_steps(manifest.workflow)
+            return manifest
+        except pydantic.ValidationError as ex:
+            errors = ex.errors()
+            msg = f"Invalid manifest: {len(errors)} validation error(s)\n"
+            msg += "\n".join(
+                f"  {' -> '.join(str(l) for l in e['loc'])}: {e['msg']}"
+                for e in errors
+            )
+            raise ValueError(msg) from ex
+
+    @classmethod
+    def _load_steps(cls, step_dicts: List[Union[dict, Step]]) -> List[Step]:
+        """Parse step dicts into Step models with validation."""
+        steps = []
+        for sd in step_dicts:
+            try:
+                steps.append(Step.model_validate(sd) if isinstance(sd, dict) else sd)
+            except pydantic.ValidationError:
+                logger.exception("Invalid step in manifest")
+        return steps
+
+    def __json__(self) -> Dict[str, Any]:
+        keys = ["uid", "name", "description", "author", "source", "columns"]
+        result = {k: v for k, v in self.__dict__.items() if k in keys}
+        result["workflow"] = [s.__json__() for s in self.workflow]
+        return result
+
+    def write_to_json_file(self, json_path: Union[str, pathlib.Path]) -> None:
+        """Write the manifest as JSON."""
+        with open(json_path, "w") as f:
+            json.dump(self.__json__(), f)
+
+
 
 @dataclass
 class ManifestStep:
@@ -223,6 +320,7 @@ def update_manifest(
 
     # Send to Ondemand if connected
     if send_to_ondemand:
+        from .connector import send_manifest
         send_manifest(manifest)
 
     logger.info(f"Manifest updated with {len(dynamic_steps)} dynamic steps")
