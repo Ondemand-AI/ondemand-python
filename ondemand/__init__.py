@@ -12,32 +12,27 @@ artifact management, HITL approvals, and R2 storage integration.
         pass
 """
 
-# Patch t_vault's Bitwarden CLI installer to handle concurrent RCC runs.
-# Two runs sharing the same holotree race on shutil.move → "already exists".
-# Must run before any robot code does `from t_vault import ...`.
-try:
-    import t_vault.utils.core.download_bitwarden as _bw_mod
-    import shutil as _shutil
-    import os as _os
-    _orig_bw_install = _bw_mod.install_bitwarden
+# Patch shutil.move to handle concurrent RCC runs sharing the same holotree.
+# t_vault's install_bitwarden() calls shutil.move(bw_binary, scripts_path) and
+# crashes with "already exists" when two processes race. This wraps shutil.move
+# to catch that specific error — must happen BEFORE any t_vault import since
+# t_vault.__init__ triggers Bitwarden() → install_bitwarden() at import time.
+import shutil as _shutil
+import os as _os
+_orig_shutil_move = _shutil.move
 
-    def _safe_install_bitwarden(force_latest=False):
-        _real_move = _shutil.move
-        def _move_no_race(src, dst, *a, **kw):
-            dest = _os.path.join(dst, _os.path.basename(src)) if _os.path.isdir(dst) else dst
-            if _os.path.exists(dest):
+def _shutil_move_no_race(src, dst, copy_function=_shutil.copy2):
+    try:
+        return _orig_shutil_move(src, dst, copy_function)
+    except _shutil.Error as e:
+        if "already exists" in str(e):
+            if _os.path.isfile(src):
                 _os.remove(src)
-                return dest
-            return _real_move(src, dst, *a, **kw)
-        _shutil.move = _move_no_race
-        try:
-            return _orig_bw_install(force_latest)
-        finally:
-            _shutil.move = _real_move
+            real_dst = _os.path.join(dst, _os.path.basename(src)) if _os.path.isdir(dst) else dst
+            return real_dst
+        raise
 
-    _bw_mod.install_bitwarden = _safe_install_bitwarden
-except ImportError:
-    pass  # t_vault not installed — no patch needed
+_shutil.move = _shutil_move_no_race
 
 from .supervisor import (
     supervised,
