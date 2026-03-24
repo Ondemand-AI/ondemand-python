@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ondemand-ai"
 version = "1.0.3"
 description = "Automation agent toolkit for the Ondemand platform"
+readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "Apache-2.0"}
 authors = [
@@ -36,6 +37,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://ondemand-ai.com.br"
 Repository = "https://github.com/Ondemand-AI/ondemand-python"
+Changelog = "https://github.com/Ondemand-AI/ondemand-python/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["ondemand*"]
