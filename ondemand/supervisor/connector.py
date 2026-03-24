@@ -191,6 +191,10 @@ class OndemandStreamer:
     def _handle_manifest(self, event: NewManifestEvent) -> None:
         """Send manifest to Ondemand (supports updates for dynamic manifests)."""
         manifest = event.manifest
+
+        # Cache step_id → title mapping for display in step reports
+        self._step_titles = self._build_title_map(manifest.workflow)
+
         payload = {
             "action": "bot_manifest",
             "payload": {
@@ -199,6 +203,19 @@ class OndemandStreamer:
         }
         self._send(payload)
         logger.info(f"Manifest sent with {len(manifest.workflow)} top-level steps")
+
+    @staticmethod
+    def _build_title_map(steps, mapping=None):
+        """Recursively build {step_id: title} from manifest workflow tree."""
+        if mapping is None:
+            mapping = {}
+        for step in steps:
+            if hasattr(step, 'step_id') and hasattr(step, 'title'):
+                if step.title and step.title != step.step_id:
+                    mapping[step.step_id] = step.title
+                if hasattr(step, 'steps') and step.steps:
+                    OndemandConnector._build_title_map(step.steps, mapping)
+        return mapping
 
     def _handle_step_report(self, event: StepReportChangeEvent) -> None:
         """Send step report to Ondemand."""
@@ -246,10 +263,11 @@ class OndemandStreamer:
                 _step_stack.remove(step_id)
                 logger.debug(f"Step stack after pop: {_step_stack}")
 
-        # Build step report payload
+        # Build step report payload — use manifest title if available
+        step_title = getattr(self, '_step_titles', {}).get(step_id, step_id)
         step_data = {
             "step_id": step_id,
-            "step_name": step_id,
+            "step_name": step_title,
             "step_status": step_report.status.value,
             "start_time": step_report.start_time.isoformat() if step_report.start_time else None,
             "end_time": step_report.end_time.isoformat() if step_report.end_time else None,
