@@ -2,6 +2,11 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.0.5] - 2026-03-24
+
+### Fixed
+- Step title mapping broken for nested manifest steps — `_build_title_map` referenced non-existent `OndemandConnector` instead of `OndemandStreamer`, causing a silent `NameError` that prevented child step titles from being cached
+
 ## [1.0.4] - 2026-03-24
 
 ### Added

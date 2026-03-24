@@ -214,7 +214,7 @@ class OndemandStreamer:
                 if step.title and step.title != step.step_id:
                     mapping[step.step_id] = step.title
                 if hasattr(step, 'steps') and step.steps:
-                    OndemandConnector._build_title_map(step.steps, mapping)
+                    OndemandStreamer._build_title_map(step.steps, mapping)
         return mapping
 
     def _handle_step_report(self, event: StepReportChangeEvent) -> None:
