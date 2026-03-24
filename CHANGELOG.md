@@ -2,6 +2,12 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.0.4] - 2026-03-24
+
+### Added
+- `get_run_info()` returns `RunInfo` dataclass with run_id, process_code, organization_id, started_at
+- `ONDEMAND_ORGANIZATION_ID` env var support (set by worker)
+
 ## [1.0.3] - 2026-03-24
 
 ### Added

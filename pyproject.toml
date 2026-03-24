@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ondemand-ai"
-version = "1.0.3"
+version = "1.0.4"
 description = "Automation agent toolkit for the Ondemand platform"
 readme = "README.md"
 requires-python = ">=3.9"

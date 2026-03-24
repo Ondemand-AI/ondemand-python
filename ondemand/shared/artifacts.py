@@ -7,12 +7,47 @@ Each run is isolated by run_id, and each task has its own output folder.
 """
 
 import json
+import os
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
 
 # Global state
 _run_id: Optional[str] = None
 _current_task: Optional[str] = None
+
+
+@dataclass
+class RunInfo:
+    """Context information about the current run."""
+    run_id: str
+    process_code: str
+    organization_id: str
+    started_at: str  # ISO format datetime string
+
+    def to_dict(self) -> dict:
+        return {
+            "run_id": self.run_id,
+            "process_code": self.process_code,
+            "organization_id": self.organization_id,
+            "started_at": self.started_at,
+        }
+
+
+def get_run_info() -> RunInfo:
+    """Get context information about the current run.
+
+    Returns a RunInfo with run_id, process_code, organization_id, and started_at.
+    Values come from environment variables set by the Temporal worker.
+    In local/standalone mode, returns defaults.
+    """
+    return RunInfo(
+        run_id=os.environ.get("ONDEMAND_RUN_ID", get_run_id()),
+        process_code=os.environ.get("ONDEMAND_PROCESS_CODE", "local"),
+        organization_id=os.environ.get("ONDEMAND_ORGANIZATION_ID", "local"),
+        started_at=datetime.utcnow().isoformat(),
+    )
 
 
 def set_run_id(run_id: str) -> None:

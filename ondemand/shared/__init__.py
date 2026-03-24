@@ -7,6 +7,8 @@ from ondemand.shared.artifacts import (
     load_artifact,
     set_run_id,
     get_run_id,
+    get_run_info,
+    RunInfo,
     set_current_task,
     get_current_task,
     # Exception tracking
@@ -37,6 +39,8 @@ __all__ = [
     "load_artifact",
     "set_run_id",
     "get_run_id",
+    "get_run_info",
+    "RunInfo",
     "set_current_task",
     "get_current_task",
     "request_approval",
