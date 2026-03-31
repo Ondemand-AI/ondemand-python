@@ -256,19 +256,27 @@ class WorkflowReporter:
 
         Activities can't modify workflow state directly, so they return
         updates that the workflow applies after the activity completes.
+        Updates can include 'timestamp' for accurate timing (set during activity execution).
         """
         for update in updates:
             if "step_id" in update and "status" in update:
                 step_id = update["step_id"]
                 status = update["status"]
-                if status == "running":
-                    self.start_step(step_id)
-                elif status == "completed":
-                    self.complete_step(step_id)
-                elif status == "failed":
-                    self.fail_step(step_id, update.get("error", ""))
-                elif status == "warning":
-                    self.warn_step(step_id)
+                ts = update.get("timestamp")  # Real timestamp from activity execution
+
+                if step_id in self._steps:
+                    step = self._steps[step_id]
+                    step.status = status
+
+                    if status == "running":
+                        step.started_at = ts or _now()
+                        self._current_step = step_id
+                    elif status in ("completed", "failed", "warning", "skipped"):
+                        step.completed_at = ts or _now()
+                        if status == "failed":
+                            step.error_message = update.get("error", "")
+                        if self._current_step == step_id:
+                            self._current_step = step.parent_id
 
             if "record" in update:
                 rec = update["record"]
