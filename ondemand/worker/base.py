@@ -35,7 +35,7 @@ class WorkerConfig:
     app_url: str = ""
     webhook_secret: str = ""
     max_concurrent: int = 1
-    idle_timeout: int = 300  # seconds to wait for work before exiting
+    idle_timeout: int = 30  # seconds to wait for work before exiting (Cloud Run pays per second)
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
