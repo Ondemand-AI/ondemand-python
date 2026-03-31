@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 
 # Default app URL
-DEFAULT_APP_URL = "https://app.ondemand-ai.com.br"
+DEFAULT_APP_URL = "https://api.ondemand-ai.com.br"
 
 # Cache for parsed inputs (avoid re-parsing)
 _cached_inputs: Optional[Dict[str, Any]] = None
