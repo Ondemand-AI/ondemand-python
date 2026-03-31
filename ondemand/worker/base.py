@@ -13,6 +13,7 @@ The worker connects to Temporal, picks up one job, executes it, and exits.
 """
 
 import asyncio
+import io
 import logging
 import os
 import signal
@@ -24,6 +25,28 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 logger = logging.getLogger("ondemand.worker")
+
+
+class TeeStream:
+    """Captures everything written to a stream while still outputting to the original."""
+
+    def __init__(self, original):
+        self.original = original
+        self.buffer = io.StringIO()
+
+    def write(self, data):
+        self.original.write(data)
+        self.buffer.write(data)
+        return len(data)
+
+    def flush(self):
+        self.original.flush()
+
+    def get_output(self) -> str:
+        return self.buffer.getvalue()
+
+    def fileno(self):
+        return self.original.fileno()
 
 
 @dataclass
@@ -139,9 +162,33 @@ class OndemandWorker:
         Start the worker. Connects to Temporal, registers activities/workflows,
         polls for tasks, executes, and exits when done.
 
+        Captures all stdout/stderr output for console.log upload.
         This is the main entrypoint — call this from your automation's __main__.
         """
-        asyncio.run(self._run())
+        # Capture stdout/stderr — everything the process outputs, including
+        # stack traces, print(), logger output, library messages
+        self._stdout_capture = TeeStream(sys.stdout)
+        self._stderr_capture = TeeStream(sys.stderr)
+        sys.stdout = self._stdout_capture
+        sys.stderr = self._stderr_capture
+
+        try:
+            asyncio.run(self._run())
+        finally:
+            # Restore original streams
+            sys.stdout = self._stdout_capture.original
+            sys.stderr = self._stderr_capture.original
+
+    def get_captured_output(self) -> str:
+        """Get all captured stdout + stderr output (for console.log upload)."""
+        parts = []
+        if self._stdout_capture:
+            parts.append(self._stdout_capture.get_output())
+        if self._stderr_capture:
+            stderr = self._stderr_capture.get_output()
+            if stderr:
+                parts.append(f"\n=== STDERR ===\n{stderr}")
+        return "".join(parts)
 
     async def _run(self):
         config = self.config
