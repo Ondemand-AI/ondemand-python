@@ -32,8 +32,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 
-# Default app URL
-DEFAULT_APP_URL = "https://api.ondemand-ai.com.br"
+# No hardcoded default — URL must come from environment or CLI args
+DEFAULT_APP_URL = None
 
 # Cache for parsed inputs (avoid re-parsing)
 _cached_inputs: Optional[Dict[str, Any]] = None
@@ -124,11 +124,14 @@ def parse_args() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     # Get api_key from CLI or env (static, same for all runs)
     api_key = args.api_key or os.environ.get("SUPERVISOR_WEBHOOK_SECRET")
 
-    # Get webhook_url from CLI, or construct from run_id
+    # Get webhook_url from CLI, or construct from run_id + ONDEMAND_APP_URL
     webhook_url = args.webhook_url
     if not webhook_url and run_id:
-        app_url = os.environ.get("ONDEMAND_APP_URL", DEFAULT_APP_URL)
-        webhook_url = f"{app_url}/api/webhooks/supervisor/{run_id}"
+        app_url = os.environ.get("ONDEMAND_APP_URL")
+        if app_url:
+            webhook_url = f"{app_url}/api/webhooks/supervisor/{run_id}"
+        else:
+            print("[ondemand] WARNING: ONDEMAND_APP_URL not set. Cannot construct webhook URL. Status reporting disabled.")
 
     # Pre-parse inputs if provided via CLI (for local testing)
     if args.inputs or args.inputs_file:
