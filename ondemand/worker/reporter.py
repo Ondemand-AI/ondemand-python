@@ -203,10 +203,10 @@ class WorkflowReporter:
 
     # ==================== Logs ====================
 
-    def log(self, message: str) -> None:
-        """Add a log line. Also prints to stdout for container logs."""
-        timestamp = _now()
-        line = f"{timestamp} {message}"
+    def log(self, message: str, level: str = "INFO", module: str = "ondemand.worker") -> None:
+        """Add a log line in standard format. Also prints to stdout for container logs."""
+        timestamp = _log_timestamp()
+        line = f"{timestamp} - {module} - {level} - {message}"
         self._logs.append(line)
         logger.info(message)
 
@@ -297,5 +297,10 @@ class WorkflowReporter:
 
 
 def _now() -> str:
-    """ISO timestamp in UTC."""
+    """ISO timestamp for step started_at/completed_at (portal needs this format)."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _log_timestamp() -> str:
+    """Readable timestamp for log lines: 2026-03-31 17:25:03"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
