@@ -25,5 +25,6 @@ Environment variables:
 """
 
 from .base import OndemandWorker
+from .reporter import WorkflowReporter
 
-__all__ = ["OndemandWorker"]
+__all__ = ["OndemandWorker", "WorkflowReporter"]
