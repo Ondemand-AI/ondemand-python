@@ -178,20 +178,67 @@ class OndemandWorker:
         if self._workflows:
             worker_kwargs["workflows"] = self._workflows
 
-        # Run the worker
+        # Run the worker with idle timeout
+        # Cloud Run Jobs pay per second — exit if no work arrives within idle_timeout
         worker = Worker(**worker_kwargs)
 
         logger.info(f"Worker polling on queue '{config.task_queue}' in namespace '{config.temporal_namespace}'")
+        logger.info(f"Idle timeout: {config.idle_timeout}s (exits if no activity runs)")
+
+        # Track activity execution to reset idle timer
+        self._last_activity_time = asyncio.get_event_loop().time()
+        self._activity_count = 0
+
+        # Wrap activities to track execution
+        original_activities = list(self._activities)
+        for i, act in enumerate(original_activities):
+            original_fn = act
+
+            async def tracked_wrapper(*args, _orig=original_fn, **kwargs):
+                self._last_activity_time = asyncio.get_event_loop().time()
+                self._activity_count += 1
+                logger.info(f"Activity started: {_orig.__name__} (#{self._activity_count})")
+                try:
+                    return await _orig(*args, **kwargs)
+                finally:
+                    self._last_activity_time = asyncio.get_event_loop().time()
+                    logger.info(f"Activity completed: {_orig.__name__}")
+
+            tracked_wrapper.__name__ = original_fn.__name__
+            tracked_wrapper.__qualname__ = original_fn.__qualname__
+            # Preserve temporalio activity.defn decorator metadata
+            if hasattr(original_fn, '__temporal_activity_definition'):
+                tracked_wrapper.__temporal_activity_definition = original_fn.__temporal_activity_definition
+
+        async def idle_watchdog():
+            """Exit the worker if idle for too long."""
+            while not self._shutdown:
+                await asyncio.sleep(10)  # Check every 10 seconds
+                elapsed = asyncio.get_event_loop().time() - self._last_activity_time
+                if elapsed > config.idle_timeout and self._activity_count > 0:
+                    # Had work, now idle — time to exit
+                    logger.info(f"Idle for {elapsed:.0f}s after completing {self._activity_count} activities. Shutting down.")
+                    self._handle_shutdown()
+                    return
+                elif elapsed > config.idle_timeout and self._activity_count == 0:
+                    # Never got any work — exit
+                    logger.info(f"No work received for {elapsed:.0f}s. Shutting down.")
+                    self._handle_shutdown()
+                    return
 
         try:
-            await worker.run()
+            # Run worker and idle watchdog concurrently
+            await asyncio.gather(
+                worker.run(),
+                idle_watchdog(),
+            )
         except asyncio.CancelledError:
             logger.info("Worker cancelled, shutting down gracefully")
         except Exception as e:
             logger.error(f"Worker error: {e}")
             sys.exit(1)
         finally:
-            logger.info("Worker stopped")
+            logger.info(f"Worker stopped. Executed {self._activity_count} activities.")
 
     def _handle_shutdown(self):
         logger.info("Shutdown signal received")
