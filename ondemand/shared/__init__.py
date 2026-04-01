@@ -21,7 +21,7 @@ from ondemand.shared.artifacts import (
     load_state,
 )
 from ondemand.shared.approval import request_approval, ApprovalRequestError
-from ondemand.shared.cli import parse_args, get_task_position
+# cli.py removed — old RCC CLI parsing, not used in new Temporal architecture
 from ondemand.shared.logging import get_logger, configure_logging, OndemandLogger
 from ondemand.shared.r2_storage import (
     upload_run_artifacts,
@@ -45,8 +45,6 @@ __all__ = [
     "get_current_task",
     "request_approval",
     "ApprovalRequestError",
-    "parse_args",
-    "get_task_position",
     # Exception tracking
     "record_exception",
     "has_recorded_exceptions",
