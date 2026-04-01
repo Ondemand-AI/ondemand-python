@@ -203,8 +203,16 @@ class WorkflowReporter:
 
     # ==================== Logs ====================
 
-    def log(self, message: str, level: str = "INFO", module: str = "ondemand.worker") -> None:
-        """Add a log line in standard format. Also prints to stdout for container logs."""
+    def log(self, message: str, level: str = "INFO", module: str | None = None) -> None:
+        """Add a log line in standard format. Also prints to stdout for container logs.
+
+        Module defaults to the current step title if one is active.
+        """
+        if module is None:
+            if self._current_step and self._current_step in self._steps:
+                module = self._steps[self._current_step].title
+            else:
+                module = "ondemand.worker"
         timestamp = _log_timestamp()
         line = f"{timestamp} - {module} - {level} - {message}"
         self._logs.append(line)
