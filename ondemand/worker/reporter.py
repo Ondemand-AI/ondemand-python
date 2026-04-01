@@ -155,7 +155,7 @@ class WorkflowReporter:
             step.completed_at = _now()
             if self._current_step == step_id:
                 self._current_step = step.parent_id
-            self.log(f"✓ {step.title}")
+            self.log(f"✓ {step.title}", level="SUCCESS")
 
     def fail_step(self, step_id: str, error: str = "") -> None:
         """Mark a step as failed."""
@@ -166,7 +166,7 @@ class WorkflowReporter:
             step.error_message = error
             if self._current_step == step_id:
                 self._current_step = step.parent_id
-            self.log(f"✗ {step.title}: {error}")
+            self.log(f"✗ {step.title}: {error}", level="ERROR")
 
     def warn_step(self, step_id: str) -> None:
         """Mark a step as completed with warnings."""
