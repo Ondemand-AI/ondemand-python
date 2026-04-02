@@ -2,6 +2,54 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.3.1] - 2026-03-31
+
+### Fixed
+- `WorkflowReporter.apply_updates()` now preserves real timestamps from activity execution instead of overwriting with workflow-side timestamps
+
+## [1.3.0] - 2026-03-31
+
+### Added
+- `WorkflowReporter` — Temporal-native step tree management replacing the old webhook-based reporting system
+  - `add_step()`, `start_step()`, `complete_step()`, `fail_step()`, `warn_step()`, `skip_step()` for step lifecycle
+  - `add_record()` for per-item results within steps
+  - `log()` for structured log lines in standard format
+  - `add_artifact()` for registering R2-uploaded files
+  - `apply_updates()` for batch-applying updates returned by activities
+  - `to_dict()` for exporting state to `@workflow.query`
+- `WorkflowReporter` step tree supports nested steps via `parent` parameter
+- Log format: `timestamp - module - LEVEL - message` (module defaults to current step title)
+
+### Changed
+- Step progress is now queryable via Temporal Query API instead of webhooks
+
+## [1.2.0] - 2026-03-30
+
+### Added
+- `OndemandWorker` — base class for Cloud Run automation workers
+  - Connects to Temporal, registers workflows/activities, polls task queue
+  - `@worker.activity` and `@worker.workflow` decorators for registration
+  - `register_activity()` and `register_workflow()` for explicit registration
+  - `worker.run()` as the main entrypoint (blocking, runs asyncio loop)
+  - Idle timeout: exits after configurable seconds with no work (saves Cloud Run costs)
+  - Captures stdout/stderr via `TeeStream` for console log upload
+  - Graceful shutdown on SIGINT/SIGTERM
+
+### Changed
+- Package now uses `[worker]` optional dependency for `temporalio` (not required for shared utilities)
+
+## [1.1.0] - 2026-03-28
+
+### Added
+- `R2StorageClient.copy_object()` for copying objects within the same bucket
+- `upload_root_artifacts()` for uploading shared files from the run's base output directory, with `skip_subdirs` parameter to avoid re-uploading task directories
+- `download_input_files()` now copies downloaded files to `artifacts/{run_id}/inputs/` for portal visibility
+- Support for `scheduled-inputs/` prefix in addition to `inputs/` for scheduled workflow file downloads
+- `upload_task_artifacts()` `exclude` parameter to skip specific filenames (e.g., `console.txt`)
+
+### Changed
+- `download_input_files()` returns `Path` for single files and `List[Path]` for multi-file inputs
+
 ## [1.0.5] - 2026-03-24
 
 ### Fixed
@@ -20,7 +68,7 @@ All notable changes to the `ondemand-ai` package will be documented in this file
 - Manifest title mapping cached on manifest send for O(1) lookup
 
 ### Fixed
-- Step names in portal showing internal IDs (e.g. "BB Parsing") instead of user-friendly titles (e.g. "Extração de Transações")
+- Step names in portal showing internal IDs (e.g., "BB Parsing") instead of user-friendly titles (e.g., "Extracao de Transacoes")
 
 ## [1.0.2] - 2026-03-23
 
