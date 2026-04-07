@@ -2,6 +2,12 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.4.6] - 2026-04-07
+
+### Fixed
+- Log handler flushes every 3 lines OR every 2 seconds (whichever comes first) — logs stream to portal even for small activities
+- Timer-based flush ensures no log lines are stuck in the buffer
+
 ## [1.4.5] - 2026-04-07
 
 ### Changed

@@ -52,7 +52,8 @@ class OndemandLogHandler(logging.Handler):
     Lines are also batched and POSTed to the webhook for real-time portal display.
     """
 
-    FLUSH_BATCH_SIZE = 10
+    FLUSH_BATCH_SIZE = 3
+    FLUSH_INTERVAL_SECONDS = 2.0
     WEBHOOK_TIMEOUT = 5.0
 
     def __init__(self):
@@ -60,6 +61,7 @@ class OndemandLogHandler(logging.Handler):
         self._lines: List[str] = []
         self._buffer: List[str] = []
         self._task_key = "console"  # default task key for LOG_STREAM
+        self._flush_timer: Optional[threading.Timer] = None
 
     def set_task_key(self, task_key: str) -> None:
         """Set the current task key (used for LOG_STREAM grouping in the portal)."""
@@ -72,12 +74,24 @@ class OndemandLogHandler(logging.Handler):
             self._buffer.append(line)
 
             if len(self._buffer) >= self.FLUSH_BATCH_SIZE:
+                self._cancel_timer()
                 self.flush()
+            elif not self._flush_timer:
+                # Flush after a short delay if batch isn't full
+                self._flush_timer = threading.Timer(self.FLUSH_INTERVAL_SECONDS, self.flush)
+                self._flush_timer.daemon = True
+                self._flush_timer.start()
         except Exception:
             self.handleError(record)
 
+    def _cancel_timer(self) -> None:
+        if self._flush_timer:
+            self._flush_timer.cancel()
+            self._flush_timer = None
+
     def flush(self) -> None:
         """Flush buffered lines to the webhook."""
+        self._cancel_timer()
         if not self._buffer:
             return
 
