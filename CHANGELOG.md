@@ -2,6 +2,13 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.4.3] - 2026-04-07
+
+### Added
+- `OndemandLogHandler` — Python logging handler that captures all log output for portal display (via LOG_STREAM webhook) and R2 upload
+- `setup_logging()`, `get_collected_logs()`, `get_and_clear_logs()` — helper functions for log collection
+- Auto-setup: `OndemandWorker` calls `setup_logging()` on startup — no manual setup needed
+
 ## [1.4.2] - 2026-04-07
 
 ### Changed
