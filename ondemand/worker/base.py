@@ -28,10 +28,17 @@ from temporalio.worker import Worker, ActivityInboundInterceptor, Interceptor
 logger = logging.getLogger("ondemand.worker")
 
 
+_active_activities = 0
+_activity_lock = asyncio.Lock() if hasattr(asyncio, 'Lock') else None
+
+
 class _OndemandActivityInterceptor(ActivityInboundInterceptor):
     """Auto-sets ONDEMAND_RUN_ID and ONDEMAND_WEBHOOK_URL before each activity."""
 
     async def execute_activity(self, input):
+        global _active_activities
+        _active_activities += 1
+
         info = activity.info()
         run_id = info.workflow_id
         app_url = os.environ.get("ONDEMAND_APP_URL", "")
@@ -40,7 +47,10 @@ class _OndemandActivityInterceptor(ActivityInboundInterceptor):
         if app_url:
             os.environ["ONDEMAND_WEBHOOK_URL"] = f"{app_url}/api/webhooks/supervisor/{run_id}"
 
-        return await super().execute_activity(input)
+        try:
+            return await super().execute_activity(input)
+        finally:
+            _active_activities -= 1
 
 
 class _OndemandInterceptor(Interceptor):
@@ -261,12 +271,18 @@ class OndemandWorker:
         start_time = asyncio.get_event_loop().time()
 
         async def idle_watchdog():
-            """Exit the worker if idle for too long (no work picked up)."""
-            await asyncio.sleep(config.idle_timeout)
-            if not self._shutdown:
-                elapsed = asyncio.get_event_loop().time() - start_time
-                logger.info(f"Idle timeout reached ({elapsed:.0f}s). Shutting down.")
-                self._handle_shutdown()
+            """Exit the worker only if idle (no activities running) for too long."""
+            while not self._shutdown:
+                await asyncio.sleep(config.idle_timeout)
+                if self._shutdown:
+                    break
+                if _active_activities == 0:
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    logger.info(f"Idle timeout ({elapsed:.0f}s). No active work. Shutting down.")
+                    self._handle_shutdown()
+                    break
+                else:
+                    logger.debug(f"Idle timeout check: {_active_activities} activities still running, skipping.")
 
         try:
             await asyncio.gather(

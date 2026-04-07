@@ -67,7 +67,14 @@ class OndemandLogHandler(logging.Handler):
         """Set the current task key (used for LOG_STREAM grouping in the portal)."""
         self._task_key = task_key
 
+    # Loggers to exclude from capture (they create noise or feedback loops)
+    EXCLUDED_LOGGERS = {"httpx", "httpcore", "urllib3", "temporalio"}
+
     def emit(self, record: logging.LogRecord) -> None:
+        # Skip noisy internal loggers
+        if any(record.name.startswith(prefix) for prefix in self.EXCLUDED_LOGGERS):
+            return
+
         try:
             line = self.format(record)
             self._lines.append(line)
