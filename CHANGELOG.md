@@ -2,6 +2,12 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.4.5] - 2026-04-07
+
+### Changed
+- Step lifecycle logs use custom levels: `STARTED`, `COMPLETED`, `FAILED`, `WARNING`, `SKIPPED` instead of generic `INFO`/`SUCCESS`/`ERROR`
+- Step name is used as the module in lifecycle log lines (e.g. `Inicialização - STARTED -`)
+
 ## [1.4.4] - 2026-04-07
 
 ### Fixed
