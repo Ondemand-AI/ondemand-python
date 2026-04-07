@@ -183,10 +183,10 @@ class R2StorageClient:
         self,
         content: bytes,
         filename: str,
+        run_id: str,
         folder: str = "",
         mime_type: str = "text/plain; charset=utf-8",
         notify: bool = True,
-        run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload raw content to R2 and optionally notify the portal.
@@ -197,17 +197,14 @@ class R2StorageClient:
         Args:
             content: Raw bytes to upload
             filename: Display name for the file (e.g. "console.1.log", "report.xlsx")
+            run_id: Run ID. Required — all uploads are scoped to a run.
             folder: Subfolder for portal UI grouping (e.g. "reports"). Empty = root level.
             mime_type: MIME type
             notify: If True, POST to webhook so portal sees the artifact immediately
-            run_id: Run ID. Defaults to ONDEMAND_RUN_ID env var.
 
         Returns:
             Dict with upload result (key, filename, size, mime_type, folder)
         """
-        run_id = run_id or os.environ.get("ONDEMAND_RUN_ID")
-        if not run_id:
-            raise RuntimeError("run_id required for upload. Set ONDEMAND_RUN_ID or pass run_id=")
 
         # Build key: {run_id}/{folder}/{filename} or {run_id}/{filename}
         key = f"{run_id}/{folder}/{filename}" if folder else f"{run_id}/{filename}"
@@ -329,7 +326,7 @@ class R2StorageClient:
 
 def notify_artifacts_uploaded(
     artifacts: List[Dict[str, Any]],
-    run_id: Optional[str] = None,
+    run_id: str,
 ) -> bool:
     """
     Notify the portal that artifacts were uploaded to R2.
@@ -337,15 +334,14 @@ def notify_artifacts_uploaded(
 
     Args:
         artifacts: List of artifact dicts (key, filename, folder, size, mime_type)
-        run_id: Run ID (defaults to ONDEMAND_RUN_ID env var)
+        run_id: Run ID. Required.
 
     Returns:
         True if webhook succeeded, False otherwise
     """
     webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
-    run_id = run_id or os.environ.get("ONDEMAND_RUN_ID")
 
-    if not webhook_url or not run_id:
+    if not webhook_url:
         logger.debug("No webhook URL or run ID — skipping artifact notification")
         return False
 
