@@ -2,6 +2,12 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.4.4] - 2026-04-07
+
+### Fixed
+- `OndemandLogHandler` reads `ONDEMAND_WEBHOOK_URL` lazily on flush (not on init) since it's set by the first activity at runtime
+- Added `SUCCESS` log level (`logger.success(...)`) — maps to `SUCCESS` in log format for portal green highlighting
+
 ## [1.4.3] - 2026-04-07
 
 ### Added
