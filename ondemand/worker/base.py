@@ -21,10 +21,31 @@ import sys
 from typing import Callable, Any, Dict, List, Optional
 from dataclasses import dataclass, field
 
+from temporalio import activity
 from temporalio.client import Client
-from temporalio.worker import Worker
+from temporalio.worker import Worker, ActivityInboundInterceptor, Interceptor
 
 logger = logging.getLogger("ondemand.worker")
+
+
+class _OndemandActivityInterceptor(ActivityInboundInterceptor):
+    """Auto-sets ONDEMAND_RUN_ID and ONDEMAND_WEBHOOK_URL before each activity."""
+
+    async def execute_activity(self, input):
+        info = activity.info()
+        run_id = info.workflow_id
+        app_url = os.environ.get("ONDEMAND_APP_URL", "")
+
+        os.environ["ONDEMAND_RUN_ID"] = run_id
+        if app_url:
+            os.environ["ONDEMAND_WEBHOOK_URL"] = f"{app_url}/api/webhooks/supervisor/{run_id}"
+
+        return await super().execute_activity(input)
+
+
+class _OndemandInterceptor(Interceptor):
+    def intercept_activity(self, next):
+        return _OndemandActivityInterceptor(next)
 
 
 class TeeStream:
@@ -224,6 +245,7 @@ class OndemandWorker:
             "task_queue": config.task_queue,
             "activities": self._activities,
             "max_concurrent_activities": config.max_concurrent,
+            "interceptors": [_OndemandInterceptor()],
         }
 
         if self._workflows:

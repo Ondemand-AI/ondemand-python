@@ -2,6 +2,15 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.4.7] - 2026-04-07
+
+### Added
+- Activity interceptor auto-sets `ONDEMAND_RUN_ID` and `ONDEMAND_WEBHOOK_URL` before each activity — robots no longer need to set them manually
+- `ONDEMAND_RUN_ID` derived from `activity.info().workflow_id`, `ONDEMAND_WEBHOOK_URL` derived from `ONDEMAND_APP_URL` env var
+
+### Fixed
+- `upload_content()` now logs a warning (not debug) when skipping due to missing run_id
+
 ## [1.4.6] - 2026-04-07
 
 ### Fixed

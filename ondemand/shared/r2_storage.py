@@ -206,7 +206,7 @@ class R2StorageClient:
         """
         run_id = os.environ.get("ONDEMAND_RUN_ID")
         if not run_id:
-            logger.debug("ONDEMAND_RUN_ID not set (local run) — skipping upload")
+            logger.warning("ONDEMAND_RUN_ID not set (local run) — skipping upload")
             return None
 
         # Build key: {run_id}/{folder}/{filename} or {run_id}/{filename}
