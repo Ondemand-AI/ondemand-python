@@ -145,7 +145,7 @@ class WorkflowReporter:
             step.status = "running"
             step.started_at = _now()
             self._current_step = step_id
-            self.log(f"▶ {step.title}")
+            self.log("", level="STARTED", module=step.title)
 
     def complete_step(self, step_id: str) -> None:
         """Mark a step as completed."""
@@ -155,7 +155,7 @@ class WorkflowReporter:
             step.completed_at = _now()
             if self._current_step == step_id:
                 self._current_step = step.parent_id
-            self.log(f"✓ {step.title}", level="SUCCESS")
+            self.log("", level="COMPLETED", module=step.title)
 
     def fail_step(self, step_id: str, error: str = "") -> None:
         """Mark a step as failed."""
@@ -166,7 +166,7 @@ class WorkflowReporter:
             step.error_message = error
             if self._current_step == step_id:
                 self._current_step = step.parent_id
-            self.log(f"✗ {step.title}: {error}", level="ERROR")
+            self.log(error, level="FAILED", module=step.title)
 
     def warn_step(self, step_id: str) -> None:
         """Mark a step as completed with warnings."""
@@ -174,11 +174,16 @@ class WorkflowReporter:
             step = self._steps[step_id]
             step.status = "warning"
             step.completed_at = _now()
+            if self._current_step == step_id:
+                self._current_step = step.parent_id
+            self.log("", level="WARNING", module=step.title)
 
     def skip_step(self, step_id: str) -> None:
         """Mark a step as skipped."""
         if step_id in self._steps:
-            self._steps[step_id].status = "skipped"
+            step = self._steps[step_id]
+            step.status = "skipped"
+            self.log("", level="SKIPPED", module=step.title)
 
     # ==================== Records ====================
 
