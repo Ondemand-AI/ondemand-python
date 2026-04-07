@@ -2,6 +2,11 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.4.1] - 2026-04-07
+
+### Fixed
+- `upload_content()` and `notify_artifacts_uploaded()`: `run_id` is now a required parameter (not optional) — prevents uploading to wrong paths
+
 ## [1.4.0] - 2026-04-07
 
 ### Added
