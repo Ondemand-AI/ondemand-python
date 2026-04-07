@@ -182,28 +182,36 @@ class R2StorageClient:
     def upload_content(
         self,
         content: bytes,
-        key: str,
         filename: str,
-        mime_type: str = "text/plain; charset=utf-8",
         folder: str = "",
+        mime_type: str = "text/plain; charset=utf-8",
         notify: bool = True,
         run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload raw content to R2 and optionally notify the portal.
 
+        The R2 key is automatically built as {run_id}/{folder}/{filename}
+        (or {run_id}/{filename} if folder is empty).
+
         Args:
             content: Raw bytes to upload
-            key: S3 key (path in bucket)
-            filename: Display name for the file
+            filename: Display name for the file (e.g. "console.1.log", "report.xlsx")
+            folder: Subfolder for portal UI grouping (e.g. "reports"). Empty = root level.
             mime_type: MIME type
-            folder: Folder for portal UI grouping
             notify: If True, POST to webhook so portal sees the artifact immediately
-            run_id: Run ID (for webhook notification)
+            run_id: Run ID. Defaults to ONDEMAND_RUN_ID env var.
 
         Returns:
             Dict with upload result (key, filename, size, mime_type, folder)
         """
+        run_id = run_id or os.environ.get("ONDEMAND_RUN_ID")
+        if not run_id:
+            raise RuntimeError("run_id required for upload. Set ONDEMAND_RUN_ID or pass run_id=")
+
+        # Build key: {run_id}/{folder}/{filename} or {run_id}/{filename}
+        key = f"{run_id}/{folder}/{filename}" if folder else f"{run_id}/{filename}"
+
         client = self._get_client()
 
         client.put_object(
