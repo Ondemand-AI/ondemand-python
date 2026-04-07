@@ -2,6 +2,12 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.4.2] - 2026-04-07
+
+### Changed
+- `upload_content()` and `notify_artifacts_uploaded()`: `run_id` is read automatically from `ONDEMAND_RUN_ID` env var — developers never pass it
+- Local runs (no `ONDEMAND_RUN_ID`) skip uploads silently instead of crashing
+
 ## [1.4.1] - 2026-04-07
 
 ### Fixed

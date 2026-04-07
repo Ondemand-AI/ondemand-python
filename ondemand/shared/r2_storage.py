@@ -183,28 +183,31 @@ class R2StorageClient:
         self,
         content: bytes,
         filename: str,
-        run_id: str,
         folder: str = "",
         mime_type: str = "text/plain; charset=utf-8",
         notify: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         """
-        Upload raw content to R2 and optionally notify the portal.
+        Upload raw content to R2 and notify the portal.
 
-        The R2 key is automatically built as {run_id}/{folder}/{filename}
-        (or {run_id}/{filename} if folder is empty).
+        The R2 key is automatically built as {run_id}/{folder}/{filename}.
+        run_id is read from ONDEMAND_RUN_ID (set by the worker at runtime).
+        If not set (local run), the upload is skipped silently.
 
         Args:
             content: Raw bytes to upload
             filename: Display name for the file (e.g. "console.1.log", "report.xlsx")
-            run_id: Run ID. Required — all uploads are scoped to a run.
             folder: Subfolder for portal UI grouping (e.g. "reports"). Empty = root level.
             mime_type: MIME type
             notify: If True, POST to webhook so portal sees the artifact immediately
 
         Returns:
-            Dict with upload result (key, filename, size, mime_type, folder)
+            Dict with upload result, or None if skipped (local run)
         """
+        run_id = os.environ.get("ONDEMAND_RUN_ID")
+        if not run_id:
+            logger.debug("ONDEMAND_RUN_ID not set (local run) — skipping upload")
+            return None
 
         # Build key: {run_id}/{folder}/{filename} or {run_id}/{filename}
         key = f"{run_id}/{folder}/{filename}" if folder else f"{run_id}/{filename}"
@@ -229,7 +232,7 @@ class R2StorageClient:
         logger.info(f"Uploaded {key} ({len(content)} bytes)")
 
         if notify:
-            notify_artifacts_uploaded([result], run_id=run_id)
+            notify_artifacts_uploaded([result])
 
         return result
 
@@ -326,22 +329,22 @@ class R2StorageClient:
 
 def notify_artifacts_uploaded(
     artifacts: List[Dict[str, Any]],
-    run_id: str,
 ) -> bool:
     """
     Notify the portal that artifacts were uploaded to R2.
     Posts to the supervisor webhook with ARTIFACTS_UPLOADED action.
+    run_id and webhook_url are read from the environment.
 
     Args:
         artifacts: List of artifact dicts (key, filename, folder, size, mime_type)
-        run_id: Run ID. Required.
 
     Returns:
         True if webhook succeeded, False otherwise
     """
     webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
+    run_id = os.environ.get("ONDEMAND_RUN_ID")
 
-    if not webhook_url:
+    if not webhook_url or not run_id:
         logger.debug("No webhook URL or run ID — skipping artifact notification")
         return False
 
