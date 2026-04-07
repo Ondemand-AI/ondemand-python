@@ -193,6 +193,10 @@ class OndemandWorker:
     async def _run(self):
         config = self.config
 
+        # Set up Ondemand logging (captures all Python logs for portal + R2)
+        from ondemand.worker.logging import setup_logging
+        setup_logging()
+
         logger.info(
             f"OndemandWorker starting: "
             f"address={config.temporal_address}, "

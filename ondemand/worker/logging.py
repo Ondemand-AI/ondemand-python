@@ -1,0 +1,178 @@
+"""
+Ondemand Activity Logging — captures Python logs for portal display and R2 upload.
+
+Attaches a handler to Python's logging system that:
+1. Collects all log lines for later R2 upload (console.N.log)
+2. Streams batches to the portal webhook (LOG_STREAM) for real-time SSE display
+3. Preserves normal stdout output
+
+Usage — automatic when using OndemandWorker (no setup needed):
+    import logging
+    logger = logging.getLogger(__name__)
+
+    @activity.defn
+    async def my_activity():
+        logger.info("Processing...")   # → stdout + portal + collected for R2
+        logger.warning("Watch out")    # → same
+        return {"result": ...}
+
+Usage — manual setup (if not using OndemandWorker):
+    from ondemand.worker.logging import setup_logging
+    setup_logging()
+"""
+
+import atexit
+import logging
+import os
+import threading
+from datetime import datetime, timezone
+from typing import List, Optional
+
+_handler: Optional["OndemandLogHandler"] = None
+_lock = threading.Lock()
+
+
+class OndemandLogHandler(logging.Handler):
+    """
+    Logging handler that collects lines and streams them to the portal.
+
+    Collected lines are stored in memory for the upload_console_log activity.
+    Lines are also batched and POSTed to the webhook for real-time portal display.
+    """
+
+    FLUSH_BATCH_SIZE = 10
+    WEBHOOK_TIMEOUT = 5.0
+
+    def __init__(self):
+        super().__init__()
+        self._lines: List[str] = []
+        self._buffer: List[str] = []
+        self._webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
+        self._run_id = os.environ.get("ONDEMAND_RUN_ID")
+        self._task_key = "console"  # default task key for LOG_STREAM
+
+    def set_task_key(self, task_key: str) -> None:
+        """Set the current task key (used for LOG_STREAM grouping in the portal)."""
+        self._task_key = task_key
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            line = self.format(record)
+            self._lines.append(line)
+
+            # Buffer for webhook streaming
+            if self._webhook_url and self._run_id:
+                self._buffer.append(line)
+                if len(self._buffer) >= self.FLUSH_BATCH_SIZE:
+                    self.flush()
+        except Exception:
+            self.handleError(record)
+
+    def flush(self) -> None:
+        """Flush buffered lines to the webhook."""
+        if not self._buffer or not self._webhook_url or not self._run_id:
+            return
+
+        lines = self._buffer[:]
+        self._buffer = []
+
+        try:
+            import httpx
+            payload = {
+                "client": "ondemand-python",
+                "version": "2.0.0",
+                "action": "LOG_STREAM",
+                "payload": {
+                    "task_key": self._task_key,
+                    "lines": lines,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+            with httpx.Client(timeout=self.WEBHOOK_TIMEOUT) as client:
+                client.post(self._webhook_url, json=payload)
+        except Exception:
+            pass  # don't break the app if webhook fails
+
+    def get_logs(self) -> List[str]:
+        """Get all collected log lines."""
+        return self._lines
+
+    def clear(self) -> None:
+        """Clear collected logs (e.g. after uploading a chunk)."""
+        self._lines = []
+        self._buffer = []
+
+
+class OndemandLogFormatter(logging.Formatter):
+    """
+    Formats log lines in the Ondemand standard format:
+    2026-04-07 11:30:00 - module - LEVEL - message
+    """
+
+    LEVEL_MAP = {
+        "WARNING": "WARNING",
+        "ERROR": "ERROR",
+        "CRITICAL": "ERROR",
+        "DEBUG": "DEBUG",
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        level = self.LEVEL_MAP.get(record.levelname, "INFO")
+        module = record.name if record.name != "root" else "ondemand.worker"
+        message = record.getMessage()
+        return f"{timestamp} - {module} - {level} - {message}"
+
+
+def setup_logging(level: int = logging.INFO) -> OndemandLogHandler:
+    """
+    Set up Ondemand logging. Call once at worker startup.
+
+    Adds the OndemandLogHandler to the root logger. All subsequent
+    logging calls (logger.info, logger.warning, etc.) from any module
+    will be captured.
+
+    Returns the handler instance.
+    """
+    global _handler
+
+    with _lock:
+        if _handler is not None:
+            return _handler
+
+        handler = OndemandLogHandler()
+        handler.setFormatter(OndemandLogFormatter())
+        handler.setLevel(level)
+
+        root = logging.getLogger()
+        root.addHandler(handler)
+        if root.level > level:
+            root.setLevel(level)
+
+        _handler = handler
+
+        # Flush remaining buffer on exit
+        atexit.register(handler.flush)
+
+        return handler
+
+
+def get_handler() -> Optional[OndemandLogHandler]:
+    """Get the active OndemandLogHandler, or None if not set up."""
+    return _handler
+
+
+def get_collected_logs() -> List[str]:
+    """Get all log lines collected since startup (or last clear)."""
+    if _handler is None:
+        return []
+    return _handler.get_logs()
+
+
+def get_and_clear_logs() -> List[str]:
+    """Get all collected log lines and clear the buffer. Used for chunked uploads."""
+    if _handler is None:
+        return []
+    logs = _handler.get_logs()[:]
+    _handler.clear()
+    return logs
