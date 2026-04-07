@@ -59,8 +59,6 @@ class OndemandLogHandler(logging.Handler):
         super().__init__()
         self._lines: List[str] = []
         self._buffer: List[str] = []
-        self._webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
-        self._run_id = os.environ.get("ONDEMAND_RUN_ID")
         self._task_key = "console"  # default task key for LOG_STREAM
 
     def set_task_key(self, task_key: str) -> None:
@@ -71,18 +69,24 @@ class OndemandLogHandler(logging.Handler):
         try:
             line = self.format(record)
             self._lines.append(line)
+            self._buffer.append(line)
 
-            # Buffer for webhook streaming
-            if self._webhook_url and self._run_id:
-                self._buffer.append(line)
-                if len(self._buffer) >= self.FLUSH_BATCH_SIZE:
-                    self.flush()
+            if len(self._buffer) >= self.FLUSH_BATCH_SIZE:
+                self.flush()
         except Exception:
             self.handleError(record)
 
     def flush(self) -> None:
         """Flush buffered lines to the webhook."""
-        if not self._buffer or not self._webhook_url or not self._run_id:
+        if not self._buffer:
+            return
+
+        # Read env vars lazily — they may be set by the first activity at runtime
+        webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
+        run_id = os.environ.get("ONDEMAND_RUN_ID")
+
+        if not webhook_url or not run_id:
+            self._buffer = []
             return
 
         lines = self._buffer[:]
@@ -101,7 +105,7 @@ class OndemandLogHandler(logging.Handler):
                 },
             }
             with httpx.Client(timeout=self.WEBHOOK_TIMEOUT) as client:
-                client.post(self._webhook_url, json=payload)
+                client.post(webhook_url, json=payload)
         except Exception:
             pass  # don't break the app if webhook fails
 
