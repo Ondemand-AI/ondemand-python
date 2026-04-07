@@ -28,6 +28,18 @@ import threading
 from datetime import datetime, timezone
 from typing import List, Optional
 
+# Register SUCCESS level (between INFO=20 and WARNING=30)
+SUCCESS = 25
+logging.addLevelName(SUCCESS, "SUCCESS")
+
+
+def _success(self, message, *args, **kwargs):
+    if self.isEnabledFor(SUCCESS):
+        self._log(SUCCESS, message, args, **kwargs)
+
+
+logging.Logger.success = _success  # type: ignore[attr-defined]
+
 _handler: Optional["OndemandLogHandler"] = None
 _lock = threading.Lock()
 
@@ -110,6 +122,7 @@ class OndemandLogFormatter(logging.Formatter):
     """
 
     LEVEL_MAP = {
+        "SUCCESS": "SUCCESS",
         "WARNING": "WARNING",
         "ERROR": "ERROR",
         "CRITICAL": "ERROR",
