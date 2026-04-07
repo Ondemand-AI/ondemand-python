@@ -2,6 +2,17 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.4.0] - 2026-04-07
+
+### Added
+- `R2StorageClient.upload_content()` — upload raw bytes to R2 with optional webhook notification to the portal
+- `notify_artifacts_uploaded()` — POST artifact metadata to the portal webhook (ARTIFACTS_UPLOADED action) so artifacts appear in the UI immediately via SSE
+- `WorkflowReporter.apply_updates()` now supports `records` array embedded in step status updates (e.g. `{step_id, status, records: [...]}`)
+
+### Changed
+- Artifact uploads can now notify the portal directly instead of routing through the workflow reporter → temporalSync → DB pipeline
+- The old `{"record": {...}}` format in `apply_updates()` still works (backward compatible)
+
 ## [1.3.1] - 2026-03-31
 
 ### Fixed
