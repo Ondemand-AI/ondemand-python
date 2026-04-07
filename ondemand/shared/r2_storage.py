@@ -179,6 +179,55 @@ class R2StorageClient:
             "mime_type": mime_type,
         }
 
+    def upload_content(
+        self,
+        content: bytes,
+        key: str,
+        filename: str,
+        mime_type: str = "text/plain; charset=utf-8",
+        folder: str = "",
+        notify: bool = True,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Upload raw content to R2 and optionally notify the portal.
+
+        Args:
+            content: Raw bytes to upload
+            key: S3 key (path in bucket)
+            filename: Display name for the file
+            mime_type: MIME type
+            folder: Folder for portal UI grouping
+            notify: If True, POST to webhook so portal sees the artifact immediately
+            run_id: Run ID (for webhook notification)
+
+        Returns:
+            Dict with upload result (key, filename, size, mime_type, folder)
+        """
+        client = self._get_client()
+
+        client.put_object(
+            Bucket=self.bucket,
+            Key=key,
+            Body=content,
+            ContentType=mime_type,
+        )
+
+        result = {
+            "key": key,
+            "filename": filename,
+            "size": len(content),
+            "mime_type": mime_type,
+            "folder": folder,
+        }
+
+        logger.info(f"Uploaded {key} ({len(content)} bytes)")
+
+        if notify:
+            notify_artifacts_uploaded([result], run_id=run_id)
+
+        return result
+
     def copy_object(
         self,
         source_key: str,
@@ -268,6 +317,54 @@ class R2StorageClient:
                     logger.error(f"Failed to upload {file_path}: {e}")
 
         return uploaded_files
+
+
+def notify_artifacts_uploaded(
+    artifacts: List[Dict[str, Any]],
+    run_id: Optional[str] = None,
+) -> bool:
+    """
+    Notify the portal that artifacts were uploaded to R2.
+    Posts to the supervisor webhook with ARTIFACTS_UPLOADED action.
+
+    Args:
+        artifacts: List of artifact dicts (key, filename, folder, size, mime_type)
+        run_id: Run ID (defaults to ONDEMAND_RUN_ID env var)
+
+    Returns:
+        True if webhook succeeded, False otherwise
+    """
+    webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
+    run_id = run_id or os.environ.get("ONDEMAND_RUN_ID")
+
+    if not webhook_url or not run_id:
+        logger.debug("No webhook URL or run ID — skipping artifact notification")
+        return False
+
+    try:
+        import httpx
+        total_size = sum(a.get("size", 0) for a in artifacts)
+        payload = {
+            "client": "ondemand-python",
+            "version": "2.0.0",
+            "action": "ARTIFACTS_UPLOADED",
+            "payload": {
+                "artifacts": artifacts,
+                "total_count": len(artifacts),
+                "total_size": total_size,
+            },
+        }
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(webhook_url, json=payload)
+            if response.status_code == 200:
+                logger.info(f"Notified portal: {len(artifacts)} artifact(s) uploaded")
+                return True
+            else:
+                logger.warning(f"Artifact notification failed: HTTP {response.status_code}")
+                return False
+    except Exception as e:
+        logger.warning(f"Failed to notify portal of artifacts: {e}")
+        return False
 
 
 # Global instance

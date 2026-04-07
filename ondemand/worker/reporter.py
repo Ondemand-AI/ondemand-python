@@ -286,6 +286,17 @@ class WorkflowReporter:
                         if self._current_step == step_id:
                             self._current_step = step.parent_id
 
+                # Records embedded in step status update
+                if "records" in update:
+                    for rec in update["records"]:
+                        self.add_record(
+                            step_id,
+                            rec["id"],
+                            rec["status"],
+                            rec.get("message", ""),
+                            rec.get("metadata"),
+                        )
+
             if "record" in update:
                 rec = update["record"]
                 self.add_record(
