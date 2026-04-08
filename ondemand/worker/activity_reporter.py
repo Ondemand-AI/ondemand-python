@@ -22,7 +22,17 @@ All methods are no-ops when ONDEMAND_WEBHOOK_URL is not set (local runs).
 import logging
 import os
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Dict, List, Optional
+
+
+class StepStatus(str, Enum):
+    """Step statuses accepted by the STEP_REPORT webhook."""
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    WARNING = "WARNING"
+    SKIPPED = "SKIPPED"
 
 logger = logging.getLogger("ondemand.worker.activity_reporter")
 
@@ -105,7 +115,7 @@ class ActivityReporter:
         _step_report(
             step_id=step_id,
             step_name=name,
-            status="running",
+            status=StepStatus.RUNNING,
             parent_step_id=parent,
             start_time=_now(),
         )
@@ -120,7 +130,7 @@ class ActivityReporter:
         _step_report(
             step_id=step_id,
             step_name=name or step_id,
-            status="completed",
+            status=StepStatus.SUCCEEDED,
             parent_step_id=parent,
             end_time=_now(),
         )
@@ -136,7 +146,7 @@ class ActivityReporter:
         _step_report(
             step_id=step_id,
             step_name=name or step_id,
-            status="failed",
+            status=StepStatus.FAILED,
             parent_step_id=parent,
             end_time=_now(),
         )
@@ -151,7 +161,7 @@ class ActivityReporter:
         _step_report(
             step_id=step_id,
             step_name=name or step_id,
-            status="warning",
+            status=StepStatus.WARNING,
             parent_step_id=parent,
             end_time=_now(),
         )
@@ -166,7 +176,7 @@ class ActivityReporter:
         _step_report(
             step_id=step_id,
             step_name=name or step_id,
-            status="skipped",
+            status=StepStatus.SKIPPED,
             parent_step_id=parent,
         )
 
@@ -182,7 +192,7 @@ class ActivityReporter:
         _step_report(
             step_id=step_id,
             step_name=step_id,
-            status="running",  # step stays running while records are added
+            status=StepStatus.RUNNING,  # step stays running while records are added
             record={
                 "id": record_id,
                 "status": status,
