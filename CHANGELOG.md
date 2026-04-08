@@ -2,6 +2,18 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.4.9] - 2026-04-08
+
+### Added
+- `ActivityReporter` — sends step updates directly to portal via webhook (STEP_REPORT) from inside activities for real-time SSE updates
+- `report` singleton: `report.step_started()`, `report.step_completed()`, `report.step_failed()`, `report.record()`
+
+## [1.4.8] - 2026-04-07
+
+### Fixed
+- Log handler excludes `httpx`, `httpcore`, `urllib3`, `temporalio` loggers (prevents feedback loops)
+- Idle watchdog checks if activities are running before shutting down worker
+
 ## [1.4.7] - 2026-04-07
 
 ### Added

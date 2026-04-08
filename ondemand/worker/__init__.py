@@ -27,5 +27,6 @@ Environment variables:
 from .base import OndemandWorker
 from .reporter import WorkflowReporter
 from .logging import setup_logging, get_collected_logs, get_and_clear_logs
+from .activity_reporter import report, ActivityReporter
 
-__all__ = ["OndemandWorker", "WorkflowReporter", "setup_logging", "get_collected_logs", "get_and_clear_logs"]
+__all__ = ["OndemandWorker", "WorkflowReporter", "setup_logging", "get_collected_logs", "get_and_clear_logs", "report", "ActivityReporter"]
