@@ -109,9 +109,18 @@ class OndemandWorker:
     def _handle_shutdown(self):
         if not self._shutdown:
             self._shutdown = True
-            logger.info("Shutdown signal received")
-            for task in asyncio.all_tasks():
-                task.cancel()
+            logger.info("Shutdown signal received — finishing current work before exiting")
+            # Tell the Temporal worker to stop accepting new tasks and drain
+            if hasattr(self, '_worker') and self._worker:
+                asyncio.create_task(self._graceful_shutdown())
+
+    async def _graceful_shutdown(self):
+        """Shutdown the worker gracefully — waits for current activities to finish."""
+        try:
+            await self._worker.shutdown()
+            logger.info("Worker drained — all activities complete")
+        except Exception as e:
+            logger.error(f"Error during graceful shutdown: {e}")
 
     def run(self):
         """Start the worker. Blocks until shutdown."""
@@ -160,12 +169,12 @@ class OndemandWorker:
         if self._workflows:
             worker_kwargs["workflows"] = self._workflows
 
-        worker = Worker(**worker_kwargs)
+        self._worker = Worker(**worker_kwargs)
 
         logger.info(f"Worker polling on queue '{config.task_queue}' in namespace '{config.temporal_namespace}'")
 
         try:
-            await worker.run()
+            await self._worker.run()
         except asyncio.CancelledError:
             logger.info("Worker cancelled, shutting down gracefully")
         except Exception as e:
