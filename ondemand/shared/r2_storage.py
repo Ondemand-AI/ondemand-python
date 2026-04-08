@@ -632,22 +632,6 @@ def download_input_files(
                 downloaded_paths.append(local_path)
                 logger.info(f"Downloaded input '{key}': {filename} ({result['size']} bytes)")
 
-                # Copy to artifacts folder for visibility in the UI
-                if run_id:
-                    try:
-                        dest_key = f"{artifacts_prefix}/{run_id}/inputs/{filename}"
-                        client.copy_object(
-                            source_key=storage_key,
-                            dest_key=dest_key,
-                            metadata={
-                                "run-id": run_id,
-                                "input-key": key,
-                                "original-path": filename,
-                            },
-                        )
-                        logger.info(f"Copied input to artifacts: {dest_key}")
-                    except Exception as e:
-                        logger.warning(f"Failed to copy input '{key}' to artifacts: {e}")
 
             except Exception as e:
                 logger.error(f"Failed to download input '{key}' from {storage_key}: {e}")
