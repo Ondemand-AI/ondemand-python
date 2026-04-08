@@ -24,6 +24,7 @@ Usage — manual setup (if not using OndemandWorker):
 import atexit
 import logging
 import os
+import sys
 import threading
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -70,23 +71,25 @@ class OndemandLogHandler(logging.Handler):
     # Only exclude loggers that cause feedback loops (webhook HTTP client logs)
     EXCLUDED_LOGGERS = {"httpx", "httpcore"}
 
+    def add_line(self, line: str) -> None:
+        """Add a pre-formatted line (e.g. from stderr capture)."""
+        self._lines.append(line)
+        self._buffer.append(line)
+        if len(self._buffer) >= self.FLUSH_BATCH_SIZE:
+            self._cancel_timer()
+            self.flush()
+        elif not self._flush_timer:
+            self._flush_timer = threading.Timer(self.FLUSH_INTERVAL_SECONDS, self.flush)
+            self._flush_timer.daemon = True
+            self._flush_timer.start()
+
     def emit(self, record: logging.LogRecord) -> None:
         if any(record.name.startswith(prefix) for prefix in self.EXCLUDED_LOGGERS):
             return
 
         try:
             line = self.format(record)
-            self._lines.append(line)
-            self._buffer.append(line)
-
-            if len(self._buffer) >= self.FLUSH_BATCH_SIZE:
-                self._cancel_timer()
-                self.flush()
-            elif not self._flush_timer:
-                # Flush after a short delay if batch isn't full
-                self._flush_timer = threading.Timer(self.FLUSH_INTERVAL_SECONDS, self.flush)
-                self._flush_timer.daemon = True
-                self._flush_timer.start()
+            self.add_line(line)
         except Exception:
             self.handleError(record)
 
@@ -161,13 +164,43 @@ class OndemandLogFormatter(logging.Formatter):
         return f"{timestamp} - {module} - {level} - {message}"
 
 
+class _StderrTee:
+    """Tees stderr so non-Python output (Temporal Rust core, subprocesses) is captured."""
+
+    def __init__(self, original, handler: OndemandLogHandler):
+        self._original = original
+        self._handler = handler
+        self._partial = ""
+
+    def write(self, text):
+        self._original.write(text)
+        self._partial += text
+        while "\n" in self._partial:
+            line, self._partial = self._partial.split("\n", 1)
+            line = line.strip()
+            if line:
+                self._handler.add_line(line)
+
+    def flush(self):
+        self._original.flush()
+
+    def fileno(self):
+        return self._original.fileno()
+
+    def isatty(self):
+        return self._original.isatty()
+
+    def __getattr__(self, name):
+        return getattr(self._original, name)
+
+
 def setup_logging(level: int = logging.INFO) -> OndemandLogHandler:
     """
     Set up Ondemand logging. Call once at worker startup.
 
-    Adds the OndemandLogHandler to the root logger. All subsequent
-    logging calls (logger.info, logger.warning, etc.) from any module
-    will be captured.
+    - Adds OndemandLogHandler to root logger (captures all Python logging)
+    - Adds handler to t_vault logger (it sets propagate=False)
+    - Tees stderr to capture Temporal Rust core output
 
     Returns the handler instance.
     """
@@ -185,6 +218,14 @@ def setup_logging(level: int = logging.INFO) -> OndemandLogHandler:
         root.addHandler(handler)
         if root.level > level:
             root.setLevel(level)
+
+        # t_vault sets propagate=False with its own StreamHandler.
+        # Add our handler directly so its logs are captured for the portal.
+        t_vault_logger = logging.getLogger("t_vault")
+        t_vault_logger.addHandler(handler)
+
+        # Capture stderr for non-Python output (Temporal Rust core, etc.)
+        sys.stderr = _StderrTee(sys.stderr, handler)
 
         _handler = handler
 
