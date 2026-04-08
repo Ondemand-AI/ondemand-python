@@ -209,8 +209,8 @@ class R2StorageClient:
             logger.warning("ONDEMAND_RUN_ID not set (local run) — skipping upload")
             return None
 
-        # Build key: {run_id}/{folder}/{filename} or {run_id}/{filename}
-        key = f"{run_id}/{folder}/{filename}" if folder else f"{run_id}/{filename}"
+        # Build key: artifacts/{run_id}/{folder}/{filename}
+        key = f"artifacts/{run_id}/{folder}/{filename}" if folder else f"artifacts/{run_id}/{filename}"
 
         client = self._get_client()
 
