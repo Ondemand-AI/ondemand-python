@@ -2,7 +2,7 @@
 
 Python SDK for building automations on the [Ondemand](https://ondemand-ai.com.br) platform.
 
-Provides `OndemandWorker` (a Temporal worker wrapper for Cloud Run Jobs), `WorkflowReporter` (step tree management queryable via the Temporal Query API), structured logging, R2 artifact storage, and human-in-the-loop approval helpers.
+Provides `OndemandWorker` (a Temporal worker with automatic log capture and graceful shutdown), `ActivityReporter` (real-time step progress via webhooks), structured logging, R2 artifact storage, and human-in-the-loop approval helpers.
 
 [![PyPI](https://img.shields.io/pypi/v/ondemand-ai)](https://pypi.org/project/ondemand-ai/)
 [![Python](https://img.shields.io/pypi/pyversions/ondemand-ai)](https://pypi.org/project/ondemand-ai/)
@@ -26,69 +26,45 @@ A minimal automation with one workflow and one activity:
 
 ```python
 # workflows.py
+from datetime import timedelta
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
-    from activities import process_data
-
-from ondemand.worker import WorkflowReporter
+    from activities import process_data, MyInput
 
 
 @workflow.defn
 class MyWorkflow:
-    def __init__(self):
-        self.reporter = WorkflowReporter()
-
-    @workflow.query
-    def get_progress(self) -> dict:
-        return self.reporter.to_dict()
-
     @workflow.run
-    async def run(self, inputs: dict) -> dict:
-        # Define the step tree
-        self.reporter.add_step("extract", "Extrair Dados")
-        self.reporter.add_step("validate", "Validar Dados", parent="extract")
-
-        # Execute activity
-        self.reporter.start_step("extract")
+    async def run(self, input: MyInput) -> dict:
         result = await workflow.execute_activity(
             process_data,
-            inputs,
+            args=[input],
             start_to_close_timeout=timedelta(minutes=30),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
-
-        # Apply updates returned by the activity
-        self.reporter.apply_updates(result.get("step_updates", []))
-        self.reporter.complete_step("extract")
-
         return result
 ```
 
 ```python
 # activities.py
+import logging
 from temporalio import activity
-from ondemand.shared import get_logger
+from ondemand.worker.activity_reporter import report
 
-logger = get_logger(__name__)
+logger = logging.getLogger("my-automation")
 
 
 @activity.defn
-async def process_data(inputs: dict) -> dict:
-    logger.section("Processing Data")
+async def process_data(input) -> dict:
+    report.step_started("extract", "Extrair Dados")
+    # ... do work ...
+    report.record("extract", "file1.pdf", "success", "Processed OK")
+    report.step_completed("extract", "Extrair Dados")
 
-    with logger.timed("Loading files"):
-        data = load(inputs["file"])
-
-    logger.success(f"Processed {len(data)} records")
-
-    return {
-        "count": len(data),
-        "step_updates": [
-            {"step_id": "validate", "status": "completed"},
-            {"record": {"step_id": "extract", "id": "file1.pdf", "status": "success", "message": "OK"}},
-            {"log": "All records validated"},
-        ],
-    }
+    logger.info("Processing complete")  # streamed to portal in real-time
+    return {"count": 42}
 ```
 
 ```python
@@ -100,30 +76,32 @@ from activities import process_data
 worker = OndemandWorker(name="my-automation")
 worker.register_workflow(MyWorkflow)
 worker.register_activity(process_data)
-
-if __name__ == "__main__":
-    worker.run()
+worker.run()
 ```
+
+## Architecture Overview
+
+The SDK is designed for automations running on **GKE Autopilot with KEDA**. KEDA scales worker pods from 0 to N based on Temporal task queue depth, with a `cooldownPeriod` to prevent premature scale-down.
+
+Key design decisions:
+
+- **No heartbeats** -- `start_to_close_timeout` is the only activity timeout. When a pod crashes, Temporal detects it via worker disconnect.
+- **Graceful shutdown** -- on SIGTERM (from KEDA scale-down), the worker drains current activities before exiting. Combined with `terminationGracePeriodSeconds: 3600` in K8s.
+- **Auto-injected context** -- an activity interceptor automatically sets `ONDEMAND_RUN_ID` and `ONDEMAND_WEBHOOK_URL` before each activity. Developers never set these manually.
+- **Real-time updates** -- `ActivityReporter` sends step progress directly to the portal via STEP_REPORT webhooks. `OndemandLogHandler` streams Python logs via LOG_STREAM webhooks. Both feed the portal's SSE stream.
 
 ## Modules
 
 ### `ondemand.worker.OndemandWorker`
 
-Connects to Temporal, registers workflows and activities, polls a task queue, and shuts down after an idle timeout (Cloud Run Jobs pay per second).
+Connects to Temporal, registers workflows and activities, polls a task queue, and handles graceful shutdown on SIGTERM.
 
 ```python
 from ondemand.worker import OndemandWorker
 
 worker = OndemandWorker(name="my-worker")
 
-# Register via decorators
-@worker.workflow
-class MyWorkflow: ...
-
-@worker.activity
-async def my_activity(inputs: dict) -> dict: ...
-
-# Or register explicitly
+# Register workflows and activities
 worker.register_workflow(MyWorkflow)
 worker.register_activity(my_activity)
 
@@ -133,110 +111,75 @@ worker.run()
 
 **Behavior:**
 - Reads configuration from environment variables (see below)
-- Captures all stdout/stderr for console log upload
-- Exits gracefully on SIGINT/SIGTERM
-- Exits after `WORKER_IDLE_TIMEOUT` seconds with no work (default: 300s)
+- Auto-sets up `OndemandLogHandler` on startup (captures all Python logs for portal streaming and R2 upload)
+- Auto-sets `ONDEMAND_RUN_ID` and `ONDEMAND_WEBHOOK_URL` via activity interceptor before each activity execution
+- Drains current activities on SIGTERM before exiting
 
-### `ondemand.worker.WorkflowReporter`
+### `ondemand.worker.activity_reporter`
 
-Manages a step tree with records, logs, and artifacts. Lives inside the workflow class and is exposed to the portal via `@workflow.query`.
-
-#### Step Management
+Sends step progress updates directly to the portal via STEP_REPORT webhooks. Each call fires immediately -- no batching, no state accumulation. The portal writes to DB and broadcasts via SSE for real-time UI updates.
 
 ```python
-reporter = WorkflowReporter()
+from ondemand.worker.activity_reporter import report
 
-# Build the step tree
-reporter.add_step("extract", "Extrair Dados")
-reporter.add_step("parse", "Parsear Arquivos", parent="extract")
-reporter.add_step("classify", "Classificar")
+# Report step lifecycle
+report.step_started("extract", "Extrair Dados", parent="process")
+report.step_completed("extract", "Extrair Dados", parent="process")
+report.step_failed("extract", "Extrair Dados", error="Timeout na API", parent="process")
+report.step_warning("extract", "Extrair Dados", parent="process")
+report.step_skipped("extract", "Extrair Dados", parent="process")
 
-# Track progress
-reporter.start_step("extract")      # logs "▶ Extrair Dados" at INFO
-reporter.complete_step("extract")    # logs "✓ Extrair Dados" at SUCCESS
-reporter.fail_step("classify", "Timeout na API")  # logs "✗ Classificar: Timeout na API" at ERROR
-reporter.warn_step("parse")         # marks step as completed with warnings
-reporter.skip_step("classify")      # marks step as skipped
-```
-
-**Step statuses:** `pending`, `running`, `completed`, `failed`, `warning`, `skipped`
-
-#### Records
-
-Attach individual item results to a step (e.g., one file processed, one transaction classified):
-
-```python
-reporter.add_record(
+# Attach individual item results to a step
+report.record(
     step_id="extract",
     record_id="invoice_001.pdf",
-    status="success",        # "success", "warning", "failed"
+    status="success",
     message="Processado OK",
     metadata={"pages": 3, "total": 1500.00},
 )
 ```
 
-#### Logs
+**Step statuses:** `RUNNING`, `SUCCEEDED`, `FAILED`, `WARNING`, `SKIPPED`
+
+All methods are no-ops when `ONDEMAND_WEBHOOK_URL` is not set, making local development seamless.
+
+### `ondemand.worker.logging` (OndemandLogHandler)
+
+Python logging handler that captures all log output for portal display and R2 upload. Automatically set up when `OndemandWorker` starts -- no manual configuration needed.
 
 ```python
-reporter.log("Downloading 42 files...", level="INFO", module="Downloader")
-# module defaults to the current step's title if omitted
+import logging
+
+logger = logging.getLogger("my-automation")
+
+@activity.defn
+async def my_activity():
+    logger.info("Processing...")    # captured + streamed to portal + stored for R2
+    logger.warning("Watch out")     # same
+    return {"result": ...}
 ```
+
+**Behavior:**
+- Attaches to Python's root logger -- captures all Python logging output
+- Adds handler directly to the `t_vault` logger (which sets `propagate=False`)
+- Tees stderr to capture non-Python output (Temporal Rust core, subprocesses)
+- Streams log batches to the portal via LOG_STREAM webhook (every 3 lines or 2 seconds)
+- Collects all log lines in memory for R2 upload as `console.log` on run completion
 
 **Console log format:** `timestamp - module - LEVEL - message`
 
-Colors in the portal UI:
+Portal UI color coding:
 | Level | Color |
 |---|---|
 | `ERROR` | Red |
 | `WARNING` | Amber |
 | `SUCCESS` | Green |
-| Lines starting with `▶` | Cyan |
+| Lines starting with `####` | Cyan |
 | Everything else | Gray |
 
-#### Artifacts
+### `ondemand.worker.WorkflowReporter` (legacy)
 
-Register files uploaded to R2 so they appear in the portal:
-
-```python
-reporter.add_artifact(
-    name="relatorio.xlsx",
-    r2_key="artifacts/run-123/relatorio.xlsx",
-    size=45_000,
-    mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
-```
-
-#### Batch Updates from Activities
-
-Activities cannot modify workflow state directly. Instead, they return a list of updates that the workflow applies:
-
-```python
-# In the activity — return updates
-return {
-    "result": "...",
-    "step_updates": [
-        {"step_id": "parse", "status": "running", "timestamp": "2026-03-31T12:00:00Z"},
-        {"step_id": "parse", "status": "completed", "timestamp": "2026-03-31T12:00:05Z"},
-        {"record": {"step_id": "parse", "id": "file1.pdf", "status": "success", "message": "OK"}},
-        {"log": "Parsed 150 records"},
-        {"artifact": {"name": "output.csv", "r2_key": "artifacts/run-123/output.csv", "size": 1024}},
-    ],
-}
-
-# In the workflow — apply them
-result = await workflow.execute_activity(my_activity, inputs, ...)
-self.reporter.apply_updates(result.get("step_updates", []))
-```
-
-#### State Export
-
-```python
-@workflow.query
-def get_progress(self) -> dict:
-    return self.reporter.to_dict()
-```
-
-Returns a dict with `status`, `current_step`, `steps` (flat list), `step_tree` (nested), `logs`, and `artifacts`. The portal polls this via the Temporal Query API.
+Query-based step tree reporter that stores state inside the Temporal workflow for polling via the Temporal Query API. This is the legacy approach -- new automations should use `ActivityReporter` for real-time webhook-based updates instead.
 
 ### `ondemand.shared.logging`
 
@@ -275,11 +218,19 @@ r2.upload_file(Path("output.xlsx"), "artifacts/run-123/output.xlsx")
 r2.download_file("inputs/uuid/data.csv", Path("./downloads/data.csv"))
 r2.copy_object("inputs/uuid/data.csv", "artifacts/run-123/inputs/data.csv")
 
+# Upload raw content with automatic key prefixing and portal notification
+# Key is built as: artifacts/{ONDEMAND_RUN_ID}/{folder}/{filename}
+r2.upload_content(
+    content=report_bytes,
+    filename="report.xlsx",
+    folder="reports",
+    notify=True,  # POSTs ARTIFACTS_UPLOADED webhook for SSE broadcast
+)
+
 # Download all file-type inputs from a workflow's input dict
 downloaded = download_input_files(
     inputs={"planilha": "inputs/uuid/data.xlsx", "empresa": "ABC"},
     dest_dir=Path("./downloads"),
-    run_id="run-123",                # copies to artifacts/ for portal visibility
 )
 # downloaded == {"planilha": Path("./downloads/data.xlsx")}
 
@@ -311,7 +262,7 @@ send_email(to="reviewer@client.com", body=f"Aprovar: {approval_url}")
 ```
 
 **Behavior:**
-- Synchronous call -- sends a webhook to the portal and gets tokenized URLs back
+- Synchronous call -- sends an APPROVAL_REQUESTED webhook to the portal and gets tokenized URLs back
 - After calling, the activity/step should exit normally
 - The Temporal workflow pauses automatically (the worker slot is freed)
 - If approved, the next step executes
@@ -347,43 +298,39 @@ info = get_run_info()  # RunInfo(run_id, process_code, organization_id, started_
 
 ## Environment Variables
 
-Set by the platform when running on Cloud Run. For local development, set them manually or use a `.env` file.
+Set by the platform at runtime. For local development, set them manually or use a `.env` file.
 
 | Variable | Required | Description |
 |---|---|---|
-| `TEMPORAL_ADDRESS` | Yes | Temporal server address (e.g., `temporal.example.com:7233`) |
-| `TEMPORAL_NAMESPACE` | Yes | Temporal namespace (typically the org code) |
-| `TEMPORAL_QUEUE` | Yes | Task queue name (typically the process code) |
-| `ONDEMAND_APP_URL` | No | API base URL for webhook callbacks |
-| `SUPERVISOR_WEBHOOK_SECRET` | No | Auth token for webhook calls |
-| `WORKER_NAME` | No | Worker name (default: `ondemand-worker`) |
-| `WORKER_MAX_CONCURRENT` | No | Max concurrent activities (default: `1`) |
-| `WORKER_IDLE_TIMEOUT` | No | Seconds to wait before exiting if idle (default: `300`) |
+| `TEMPORAL_ADDRESS` | Yes | Temporal server address (e.g., `temporal.ondemand-ai.com.br:7233`) |
+| `TEMPORAL_NAMESPACE` | Yes | Temporal namespace |
+| `TEMPORAL_QUEUE` | Yes | Task queue name |
+| `ONDEMAND_APP_URL` | Yes | API base URL (e.g., `https://api.ondemand-ai.com.br`) |
 | `R2_ENDPOINT` | No | Cloudflare R2 endpoint URL |
 | `R2_ACCESS_KEY` | No | R2 access key ID |
 | `R2_SECRET_KEY` | No | R2 secret access key |
 | `R2_BUCKET` | No | R2 bucket name |
-| `ONDEMAND_RUN_ID` | No | Current run UUID |
-| `ONDEMAND_PROCESS_CODE` | No | Process code for the current run |
-| `ONDEMAND_ORGANIZATION_ID` | No | Organization ID for the current run |
-| `ONDEMAND_WEBHOOK_URL` | No | Webhook URL (required for `request_approval`) |
-| `ONDEMAND_WEBHOOK_SECRET` | No | Webhook auth secret |
+| `WORKER_MAX_CONCURRENT` | No | Max concurrent activities (default: `1`) |
+
+`ONDEMAND_RUN_ID` and `ONDEMAND_WEBHOOK_URL` are **auto-set by the activity interceptor** at runtime -- never set these manually.
 
 ## Package Structure
 
 ```
 ondemand/
-├── __init__.py                # Top-level exports (request_approval, ApprovalRequestError)
+├── __init__.py                    # Top-level: request_approval, ApprovalRequestError
 ├── worker/
-│   ├── __init__.py            # Exports: OndemandWorker, WorkflowReporter
-│   ├── base.py                # OndemandWorker — Temporal connection, polling, idle timeout
-│   └── reporter.py            # WorkflowReporter — step tree, records, logs, artifacts
+│   ├── __init__.py                # Exports: OndemandWorker, report, ActivityReporter, setup_logging
+│   ├── base.py                    # OndemandWorker + activity interceptor + graceful shutdown
+│   ├── activity_reporter.py       # ActivityReporter — real-time step updates via webhook
+│   ├── logging.py                 # OndemandLogHandler + _StderrTee + setup_logging()
+│   └── reporter.py                # WorkflowReporter (legacy — for Temporal query-based reporting)
 └── shared/
-    ├── __init__.py            # Re-exports all shared utilities
-    ├── approval.py            # request_approval() for HITL workflows
-    ├── artifacts.py           # save_artifact, load_artifact, output dirs, RunInfo
-    ├── logging.py             # OndemandLogger with SUCCESS level, section/step/timed helpers
-    └── r2_storage.py          # R2StorageClient, download/upload utilities
+    ├── __init__.py                # Re-exports all shared utilities
+    ├── approval.py                # request_approval() for HITL workflows
+    ├── artifacts.py               # save_artifact, load_artifact, output dirs, RunInfo
+    ├── logging.py                 # OndemandLogger with SUCCESS level
+    └── r2_storage.py              # R2StorageClient, upload_content, download_input_files
 ```
 
 ## Publishing
