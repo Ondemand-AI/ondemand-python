@@ -51,7 +51,7 @@ class WorkerConfig:
     task_queue: str = ""
     app_url: str = ""
     webhook_secret: str = ""
-    max_concurrent: int = 1
+    max_concurrent_activities: int = 0
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -61,7 +61,7 @@ class WorkerConfig:
             task_queue=os.environ.get("TEMPORAL_QUEUE", ""),
             app_url=os.environ.get("ONDEMAND_APP_URL", ""),
             webhook_secret=os.environ.get("SUPERVISOR_WEBHOOK_SECRET", ""),
-            max_concurrent=int(os.environ.get("WORKER_MAX_CONCURRENT", "1")),
+            max_concurrent_activities=int(os.environ.get("MAX_CONCURRENT_ACTIVITIES", "0")),
         )
 
         # Validate required fields
@@ -72,6 +72,8 @@ class WorkerConfig:
             missing.append("TEMPORAL_NAMESPACE")
         if not config.task_queue:
             missing.append("TEMPORAL_QUEUE")
+        if not config.max_concurrent_activities:
+            missing.append("MAX_CONCURRENT_ACTIVITIES")
 
         if missing:
             raise RuntimeError(
@@ -162,7 +164,7 @@ class OndemandWorker:
             "client": client,
             "task_queue": config.task_queue,
             "activities": self._activities,
-            "max_concurrent_activities": config.max_concurrent,
+            "max_concurrent_activities": config.max_concurrent_activities,
             "interceptors": [_OndemandInterceptor()],
         }
 
