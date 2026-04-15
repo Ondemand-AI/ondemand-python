@@ -13,6 +13,7 @@ import logging
 import os
 import signal
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Any, Dict, List, Optional
 from dataclasses import dataclass, field
 
@@ -165,6 +166,7 @@ class OndemandWorker:
             "task_queue": config.task_queue,
             "activities": self._activities,
             "max_concurrent_activities": config.max_concurrent_activities,
+            "activity_executor": ThreadPoolExecutor(max_workers=config.max_concurrent_activities),
             "interceptors": [_OndemandInterceptor()],
         }
 
