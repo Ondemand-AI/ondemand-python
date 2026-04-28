@@ -146,6 +146,13 @@ class OndemandWorker:
     async def _run(self):
         config = self.config
 
+        # Initialize observability BEFORE logging (so OTLP handler is available)
+        try:
+            import ondemand_obs
+            ondemand_obs.configure_observability(service_name=self.name)
+        except ImportError:
+            pass
+
         # Set up Ondemand logging (captures all Python logs for portal + R2)
         from ondemand.worker.logging import setup_logging
         setup_logging()
@@ -163,13 +170,6 @@ class OndemandWorker:
         loop = asyncio.get_event_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._handle_shutdown)
-
-        # Initialize observability (no-op if HYPERDX_API_KEY not set)
-        try:
-            import ondemand_obs
-            ondemand_obs.configure_observability(service_name=self.name)
-        except ImportError:
-            pass
 
         # Connect to Temporal
         client = await Client.connect(
