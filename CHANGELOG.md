@@ -2,6 +2,14 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.5.0] - 2026-04-28
+
+### Added
+- OpenTelemetry observability via `ondemand-obs` package — traces, metrics, and logs sent to HyperDX when `HYPERDX_API_KEY` is set
+- `TracingInterceptor` automatically added to Temporal worker (Temporal workflow + activity spans)
+- OTLP log handler attached to root logger as sibling to `OndemandLogHandler` (dual-emit — webhook path unchanged)
+- All httpx and requests calls auto-instrumented; webhook `traceparent` headers propagate traces end-to-end into the API
+
 ## [1.4.9] - 2026-04-08
 
 ### Added

@@ -229,6 +229,15 @@ def setup_logging(level: int = logging.INFO) -> OndemandLogHandler:
 
         _handler = handler
 
+        # Dual-emit to OTLP if observability is configured (e.g. HyperDX)
+        try:
+            import ondemand_obs
+            otlp_handler = ondemand_obs.get_otlp_log_handler()
+            if otlp_handler is not None:
+                root.addHandler(otlp_handler)
+        except ImportError:
+            pass
+
         # Flush remaining buffer on exit
         atexit.register(handler.flush)
 

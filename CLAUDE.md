@@ -4,18 +4,16 @@ Core Python library for all Ondemand automation workers.
 
 - **PyPI name:** `ondemand-ai`
 - **Import path:** `ondemand`
-- **Current version:** 1.4.16
+- **Current version:** 1.5.0
 - **Python:** ≥ 3.9
 - **Branch:** `main`
 
 ## Installation
 
-Not published to PyPI. Robots install it from GitHub at Docker build time:
+Published to PyPI. Robots install via `requirements.txt`:
 
-```dockerfile
-pip install git+https://github.com/Ondemand-AI/ondemand-python.git
-# or with Temporal worker support:
-pip install "ondemand-ai[worker] @ git+https://github.com/Ondemand-AI/ondemand-python.git"
+```
+ondemand-ai[worker]>=1.5.0
 ```
 
 Managed locally with `uv` (`uv.lock` present).
@@ -47,14 +45,14 @@ from ondemand.shared import get_logger
 ## Dependencies
 
 - Base: `requests`, `httpx`, `boto3`
-- `[worker]` extra: `temporalio>=1.7.0`
+- `[worker]` extra: `temporalio>=1.7.0`, `ondemand-obs[temporal]>=0.1.0`
 
 ## Release process
 
 1. Bump version in `pyproject.toml`
 2. Update `CHANGELOG.md`
-3. Push to `main` — robots pick it up on next Docker build
-4. No PyPI publish step.
+3. Push to `main`
+4. Push a tag `vX.Y.Z` → GitHub Actions publishes to PyPI automatically
 
 ## Changelog
 

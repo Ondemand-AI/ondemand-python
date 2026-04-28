@@ -44,6 +44,17 @@ class _OndemandInterceptor(Interceptor):
         return _OndemandActivityInterceptor(next)
 
 
+def _build_interceptors() -> list:
+    interceptors = [_OndemandInterceptor()]
+    try:
+        import ondemand_obs
+        if ondemand_obs.is_configured():
+            interceptors.append(ondemand_obs.get_temporal_tracing_interceptor())
+    except ImportError:
+        pass
+    return interceptors
+
+
 @dataclass
 class WorkerConfig:
     """Configuration resolved from environment variables."""
@@ -153,6 +164,13 @@ class OndemandWorker:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._handle_shutdown)
 
+        # Initialize observability (no-op if HYPERDX_API_KEY not set)
+        try:
+            import ondemand_obs
+            ondemand_obs.configure_observability(service_name=self.name)
+        except ImportError:
+            pass
+
         # Connect to Temporal
         client = await Client.connect(
             config.temporal_address,
@@ -167,7 +185,7 @@ class OndemandWorker:
             "activities": self._activities,
             "max_concurrent_activities": config.max_concurrent_activities,
             "activity_executor": ThreadPoolExecutor(max_workers=config.max_concurrent_activities),
-            "interceptors": [_OndemandInterceptor()],
+            "interceptors": _build_interceptors(),
         }
 
         if self._workflows:
