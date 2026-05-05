@@ -2,6 +2,12 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.5.2] - 2026-05-05
+
+### Added
+- `ondemand.shared.bitwarden` — `bw_connect()` and `bw_get_item()` wrapper over `t_vault`; robots should import from here instead of `t_vault` directly
+- `bw_connect()` suppresses urllib3 connection-refused warnings during Bitwarden CLI server startup (transient retries that always resolve)
+
 ## [1.5.0] - 2026-04-28
 
 ### Added
