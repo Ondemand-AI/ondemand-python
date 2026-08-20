@@ -2,6 +2,40 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.6.0] - 2026-08-20
+
+### Fixed
+- **Log lines were attributed to the logging module, not the robot.** Every record
+  emitted through `logger.success()`, `.section()`, `.step()`, `.divider()`,
+  `.summary()` and `.timed()` reported `ondemand/shared/logging.py` as its source,
+  because Python's `findCaller` stops at the first frame outside the *stdlib*
+  logging module — which was our wrapper. Those helpers now pass an explicit
+  `stacklevel`, so `code.file.path` / `code.line.number` / `code.function.name`
+  (the `code.*` attributes OpenTelemetry exports to HyperDX) point at the robot.
+  The required offset changed in Python 3.11, so it is resolved from
+  `sys.version_info` and verified on 3.9, 3.13 and 3.14.
+
+### Added
+- Records exported to HyperDX are now tagged with the Temporal run context:
+  `run_id`, `activity_name`, `attempt` and `task_queue`. HyperDX can filter a
+  single execution with `run_id:"<uuid>"`. The run id is read from temporalio's
+  activity contextvar rather than `ONDEMAND_RUN_ID`, because that env var is
+  process-global while a worker runs up to `MAX_CONCURRENT_ACTIVITIES` activities
+  in parallel threads — concurrent runs on one pod overwrite each other's value.
+  The env var remains the fallback outside an activity.
+
+### Changed
+- `Logger.success()` had two independent definitions — `OndemandLogger.success` in
+  `shared/logging.py` and a `logging.Logger` monkeypatch in `worker/logging.py` —
+  both carrying the same attribution bug. There is now one definition, in
+  `shared/logging.py`, patched onto the base `Logger` class so it remains available
+  on loggers created before `OndemandLogger` was registered (the common
+  `logging.getLogger("demo")` pattern in robots). `worker/logging.py` re-exports
+  `SUCCESS` for compatibility.
+- Requires `ondemand-obs>=0.1.6`, which exports SUCCESS records as OTel severity
+  `INFO` plus an `ondemand.outcome=success` attribute, so HyperDX's level filter
+  recognises them.
+
 ## [1.5.3] - 2026-08-20
 
 ### Security

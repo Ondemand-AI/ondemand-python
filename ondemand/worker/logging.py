@@ -29,17 +29,10 @@ import threading
 from datetime import datetime, timezone
 from typing import List, Optional
 
-# Register SUCCESS level (between INFO=20 and WARNING=30)
-SUCCESS = 25
-logging.addLevelName(SUCCESS, "SUCCESS")
-
-
-def _success(self, message, *args, **kwargs):
-    if self.isEnabledFor(SUCCESS):
-        self._log(SUCCESS, message, args, **kwargs)
-
-
-logging.Logger.success = _success  # type: ignore[attr-defined]
+# SUCCESS level (25) and Logger.success() are defined once in shared.logging;
+# importing it registers the level name and patches the base Logger class.
+# Re-exported here so `from ondemand.worker.logging import SUCCESS` keeps working.
+from ondemand.shared.logging import SUCCESS  # noqa: F401
 
 _handler: Optional["OndemandLogHandler"] = None
 _lock = threading.Lock()
@@ -143,6 +136,41 @@ class OndemandLogHandler(logging.Handler):
         self._buffer = []
 
 
+class _RunContextFilter(logging.Filter):
+    """Stamp the Temporal run context onto every record bound for HyperDX.
+
+    OTel's LoggingHandler copies non-reserved LogRecord attributes into log
+    attributes, so anything set here becomes filterable in HyperDX —
+    e.g. run_id:"7f3a…" to isolate a single execution.
+
+    The run id comes from the *activity context*, not ONDEMAND_RUN_ID: that env
+    var is process-global while a worker runs up to MAX_CONCURRENT_ACTIVITIES
+    activities in parallel threads, so concurrent runs on one pod overwrite each
+    other's value. temporalio keeps its activity context in a contextvar, which
+    is correct per task. The env var remains the fallback for local runs and for
+    log lines emitted outside an activity (worker startup, shutdown).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            from temporalio import activity
+
+            if activity.in_activity():
+                info = activity.info()
+                record.run_id = info.workflow_id
+                record.activity_name = info.activity_type
+                record.attempt = info.attempt
+                record.task_queue = info.task_queue
+                return True
+        except Exception:
+            pass  # not in an activity, or temporalio unavailable
+
+        run_id = os.environ.get("ONDEMAND_RUN_ID")
+        if run_id:
+            record.run_id = run_id
+        return True
+
+
 class OndemandLogFormatter(logging.Formatter):
     """
     Formats log lines in the Ondemand standard format:
@@ -235,6 +263,10 @@ def setup_logging(level: int = logging.INFO) -> OndemandLogHandler:
             import ondemand_obs
             otlp_handler = ondemand_obs.get_otlp_log_handler()
             if otlp_handler is not None:
+                # Tag every exported record with run_id so HyperDX can filter
+                # by execution. Scoped to this handler so the portal/R2 path
+                # is untouched.
+                otlp_handler.addFilter(_RunContextFilter())
                 root.addHandler(otlp_handler)
         except ImportError:
             pass
