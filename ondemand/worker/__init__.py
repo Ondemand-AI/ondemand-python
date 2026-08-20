@@ -21,7 +21,8 @@ Environment variables:
     TEMPORAL_NAMESPACE: Temporal namespace (org code, e.g., "gse")
     TEMPORAL_QUEUE: Task queue name (process code, e.g., "conciliacao")
     ONDEMAND_APP_URL: API base URL for webhook callbacks
-    SUPERVISOR_WEBHOOK_SECRET: API key for webhook auth
+    ONDEMAND_WEBHOOK_SECRET: shared secret for webhook auth, sent by every
+        sender as `Authorization: Bearer`. Omitted when unset, so local runs work.
 """
 
 from .base import OndemandWorker

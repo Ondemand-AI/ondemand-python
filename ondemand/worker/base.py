@@ -62,7 +62,6 @@ class WorkerConfig:
     temporal_namespace: str = ""
     task_queue: str = ""
     app_url: str = ""
-    webhook_secret: str = ""
     max_concurrent_activities: int = 0
 
     @classmethod
@@ -72,7 +71,6 @@ class WorkerConfig:
             temporal_namespace=os.environ.get("TEMPORAL_NAMESPACE", ""),
             task_queue=os.environ.get("TEMPORAL_QUEUE", ""),
             app_url=os.environ.get("ONDEMAND_APP_URL", ""),
-            webhook_secret=os.environ.get("SUPERVISOR_WEBHOOK_SECRET", ""),
             max_concurrent_activities=int(os.environ.get("MAX_CONCURRENT_ACTIVITIES", "0")),
         )
 

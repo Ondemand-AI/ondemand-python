@@ -128,7 +128,8 @@ class OndemandLogHandler(logging.Handler):
                 },
             }
             with httpx.Client(timeout=self.WEBHOOK_TIMEOUT) as client:
-                client.post(webhook_url, json=payload)
+                from ondemand.shared.webhook_auth import webhook_headers
+                client.post(webhook_url, json=payload, headers=webhook_headers())
         except Exception:
             pass  # don't break the app if webhook fails
 

@@ -2,6 +2,25 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.5.3] - 2026-08-20
+
+### Security
+- Every sender to the supervisor webhook now authenticates. `request_approval` was
+  the only one sending `Authorization: Bearer`; step reports
+  (`worker/activity_reporter.py`), log streaming (`worker/logging.py`) and artifact
+  notifications (`shared/r2_storage.py`) sent no credentials at all, so the API
+  could not enforce auth without breaking three of the four callers.
+- Headers are now built in one place, `ondemand.shared.webhook_auth.webhook_headers()`,
+  reading a single environment variable: `ONDEMAND_WEBHOOK_SECRET`.
+
+### Changed
+- **Renamed:** the worker previously read `SUPERVISOR_WEBHOOK_SECRET` into a config
+  field that nothing ever used. That field is removed and the variable is gone; set
+  `ONDEMAND_WEBHOOK_SECRET` instead. The differing names on each side of the wire are
+  why the secret stayed unset everywhere.
+- The Authorization header is omitted when no secret is set, so local runs and
+  environments that have not yet enabled auth keep working.
+
 ## [1.5.2] - 2026-05-05
 
 ### Added

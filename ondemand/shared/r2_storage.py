@@ -362,7 +362,8 @@ def notify_artifacts_uploaded(
             },
         }
         with httpx.Client(timeout=15.0) as client:
-            response = client.post(webhook_url, json=payload)
+            from ondemand.shared.webhook_auth import webhook_headers
+            response = client.post(webhook_url, json=payload, headers=webhook_headers())
             if response.status_code == 200:
                 logger.info(f"Notified portal: {len(artifacts)} artifact(s) uploaded")
                 return True

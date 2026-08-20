@@ -51,8 +51,9 @@ def _post(payload: dict) -> bool:
 
     try:
         import httpx
+        from ondemand.shared.webhook_auth import webhook_headers
         with httpx.Client(timeout=_WEBHOOK_TIMEOUT) as client:
-            response = client.post(webhook_url, json=payload)
+            response = client.post(webhook_url, json=payload, headers=webhook_headers())
             return response.status_code == 200
     except Exception as e:
         logger.debug(f"Webhook POST failed: {e}")

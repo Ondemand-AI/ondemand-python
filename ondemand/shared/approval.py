@@ -27,6 +27,8 @@ from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
+from ondemand.shared.webhook_auth import webhook_headers
+
 logger = logging.getLogger(__name__)
 
 # Max retries for the webhook call
@@ -72,9 +74,8 @@ def request_approval(
     Raises:
         ApprovalRequestError: If the webhook call fails after all retries.
     """
-    # Get webhook URL and secret from environment
+    # Get webhook URL from environment; auth headers come from the shared builder
     webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
-    webhook_secret = os.environ.get("ONDEMAND_WEBHOOK_SECRET", "")
 
     if not webhook_url:
         raise ApprovalRequestError(
@@ -104,11 +105,7 @@ def request_approval(
     }
 
     # Send the webhook with retries
-    headers = {
-        "Content-Type": "application/json",
-    }
-    if webhook_secret:
-        headers["Authorization"] = f"Bearer {webhook_secret}"
+    headers = webhook_headers()
 
     last_error = None
     for attempt in range(MAX_RETRIES):
