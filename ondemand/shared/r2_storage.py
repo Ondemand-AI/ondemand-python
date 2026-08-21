@@ -14,6 +14,7 @@ import logging
 import mimetypes
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from ondemand.shared.run_context import current_run_id, current_webhook_url
 
 logger = logging.getLogger(__name__)
 
@@ -191,8 +192,9 @@ class R2StorageClient:
         Upload raw content to R2 and notify the portal.
 
         The R2 key is automatically built as {run_id}/{folder}/{filename}.
-        run_id is read from ONDEMAND_RUN_ID (set by the worker at runtime).
-        If not set (local run), the upload is skipped silently.
+        run_id comes from ondemand.shared.run_context (the activity context when
+        available, else ONDEMAND_RUN_ID). If there is no run, the upload is
+        skipped silently.
 
         Args:
             content: Raw bytes to upload
@@ -204,9 +206,9 @@ class R2StorageClient:
         Returns:
             Dict with upload result, or None if skipped (local run)
         """
-        run_id = os.environ.get("ONDEMAND_RUN_ID")
+        run_id = current_run_id()
         if not run_id:
-            logger.warning("ONDEMAND_RUN_ID not set (local run) — skipping upload")
+            logger.warning("No run context (local run) — skipping upload")
             return None
 
         # Build key: artifacts/{run_id}/{folder}/{filename}
@@ -333,7 +335,7 @@ def notify_artifacts_uploaded(
     """
     Notify the portal that artifacts were uploaded to R2.
     Posts to the supervisor webhook with ARTIFACTS_UPLOADED action.
-    run_id and webhook_url are read from the environment.
+    run_id and webhook_url come from ondemand.shared.run_context.
 
     Args:
         artifacts: List of artifact dicts (key, filename, folder, size, mime_type)
@@ -341,8 +343,8 @@ def notify_artifacts_uploaded(
     Returns:
         True if webhook succeeded, False otherwise
     """
-    webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
-    run_id = os.environ.get("ONDEMAND_RUN_ID")
+    webhook_url = current_webhook_url()
+    run_id = current_run_id()
 
     if not webhook_url or not run_id:
         logger.debug("No webhook URL or run ID — skipping artifact notification")

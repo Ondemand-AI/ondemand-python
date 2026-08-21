@@ -4,7 +4,8 @@ OndemandWorker — base class for automation workers.
 Handles:
 - Temporal connection and activity/workflow registration
 - Graceful shutdown on SIGTERM (KEDA scale-down)
-- Auto-sets ONDEMAND_RUN_ID and ONDEMAND_WEBHOOK_URL via activity interceptor
+- Publishes ONDEMAND_RUN_ID / ONDEMAND_WEBHOOK_URL via activity interceptor
+  (fallback only — in-process code should use ondemand.shared.run_context)
 - Auto-sets up log capture via OndemandLogHandler
 """
 
@@ -25,7 +26,15 @@ logger = logging.getLogger("ondemand.worker")
 
 
 class _OndemandActivityInterceptor(ActivityInboundInterceptor):
-    """Auto-sets ONDEMAND_RUN_ID and ONDEMAND_WEBHOOK_URL before each activity."""
+    """Publishes the run context into the environment before each activity.
+
+    These variables are a *compatibility fallback* only — for subprocesses that
+    inherit the environment and for code paths outside an activity. They are
+    process-global, so with concurrent activities on one pod the values belong to
+    whichever activity started last. In-process callers must therefore read the
+    run context through ondemand.shared.run_context, which prefers temporalio's
+    per-task activity contextvar. See that module for the full explanation.
+    """
 
     async def execute_activity(self, input):
         info = activity.info()

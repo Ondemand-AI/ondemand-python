@@ -33,6 +33,7 @@ from typing import List, Optional
 # importing it registers the level name and patches the base Logger class.
 # Re-exported here so `from ondemand.worker.logging import SUCCESS` keeps working.
 from ondemand.shared.logging import SUCCESS  # noqa: F401
+from ondemand.shared.run_context import current_run_id, current_webhook_url
 
 _handler: Optional["OndemandLogHandler"] = None
 _lock = threading.Lock()
@@ -98,8 +99,8 @@ class OndemandLogHandler(logging.Handler):
             return
 
         # Read env vars lazily — they may be set by the first activity at runtime
-        webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
-        run_id = os.environ.get("ONDEMAND_RUN_ID")
+        webhook_url = current_webhook_url()
+        run_id = current_run_id()
 
         if not webhook_url or not run_id:
             self._buffer = []
@@ -143,31 +144,26 @@ class _RunContextFilter(logging.Filter):
     attributes, so anything set here becomes filterable in HyperDX —
     e.g. run_id:"7f3a…" to isolate a single execution.
 
-    The run id comes from the *activity context*, not ONDEMAND_RUN_ID: that env
-    var is process-global while a worker runs up to MAX_CONCURRENT_ACTIVITIES
-    activities in parallel threads, so concurrent runs on one pod overwrite each
-    other's value. temporalio keeps its activity context in a contextvar, which
-    is correct per task. The env var remains the fallback for local runs and for
-    log lines emitted outside an activity (worker startup, shutdown).
+    The run id is resolved by ondemand.shared.run_context, which prefers the
+    per-task activity context over the process-global ONDEMAND_RUN_ID.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        run_id = current_run_id()
+        if run_id:
+            record.run_id = run_id
+
         try:
             from temporalio import activity
 
             if activity.in_activity():
                 info = activity.info()
-                record.run_id = info.workflow_id
                 record.activity_name = info.activity_type
                 record.attempt = info.attempt
                 record.task_queue = info.task_queue
-                return True
         except Exception:
-            pass  # not in an activity, or temporalio unavailable
+            pass  # temporalio unavailable, or no activity context
 
-        run_id = os.environ.get("ONDEMAND_RUN_ID")
-        if run_id:
-            record.run_id = run_id
         return True
 
 

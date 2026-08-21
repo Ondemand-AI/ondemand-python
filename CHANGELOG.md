@@ -2,6 +2,33 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.7.0] - 2026-08-21
+
+### Fixed
+- **Concurrent runs on one pod could overwrite each other's run context.** The
+  activity interceptor publishes `ONDEMAND_RUN_ID` / `ONDEMAND_WEBHOOK_URL` into
+  `os.environ`, which is process-global, while a worker executes up to
+  `MAX_CONCURRENT_ACTIVITIES` activities at once in a `ThreadPoolExecutor`. Two
+  activities from different runs therefore raced, and whichever wrote last won for
+  both — sending artifacts to `artifacts/{wrong_run_id}/` and posting step reports,
+  approvals, artifact notifications and log streams against the wrong run.
+
+  Every in-process consumer now resolves the run through the new
+  `ondemand.shared.run_context`, which reads temporalio's per-task activity
+  contextvar and falls back to the environment only outside an activity. Verified
+  with two concurrent activities where the environment variable held the other
+  run's id throughout.
+
+  The interceptor still publishes both variables, for subprocesses that inherit
+  the environment and for code running outside an activity, but they are no longer
+  the in-process source of truth.
+
+### Added
+- `ondemand.shared.run_context` with `current_run_id()` and
+  `current_webhook_url()`. Prefer these over reading the environment directly.
+  `current_webhook_url()` composes the URL from `ONDEMAND_APP_URL` (static per
+  deployment, so not subject to the race) plus the resolved run id.
+
 ## [1.6.0] - 2026-08-20
 
 ### Fixed

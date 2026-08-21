@@ -28,6 +28,7 @@ from typing import Any, Dict, Optional, Tuple
 import httpx
 
 from ondemand.shared.webhook_auth import webhook_headers
+from ondemand.shared.run_context import current_webhook_url
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +75,12 @@ def request_approval(
     Raises:
         ApprovalRequestError: If the webhook call fails after all retries.
     """
-    # Get webhook URL from environment; auth headers come from the shared builder
-    webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
+    # Resolved from the run context; auth headers come from the shared builder
+    webhook_url = current_webhook_url()
 
     if not webhook_url:
         raise ApprovalRequestError(
-            "ONDEMAND_WEBHOOK_URL not set. Cannot request approval outside of an Ondemand execution."
+            "No run context. Cannot request approval outside of an Ondemand execution."
         )
 
     # Auto-detect step name from the shared module if not provided

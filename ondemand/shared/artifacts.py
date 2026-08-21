@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
+from ondemand.shared.run_context import current_run_id
 
 # Global state
 _run_id: Optional[str] = None
@@ -43,7 +44,7 @@ def get_run_info() -> RunInfo:
     In local/standalone mode, returns defaults.
     """
     return RunInfo(
-        run_id=os.environ.get("ONDEMAND_RUN_ID", get_run_id()),
+        run_id=current_run_id() or get_run_id(),
         process_code=os.environ.get("ONDEMAND_PROCESS_CODE", "local"),
         organization_id=os.environ.get("ONDEMAND_ORGANIZATION_ID", "local"),
         started_at=datetime.utcnow().isoformat(),

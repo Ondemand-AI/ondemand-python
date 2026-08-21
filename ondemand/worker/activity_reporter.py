@@ -16,7 +16,7 @@ Usage inside an activity:
         report.record("extract", "INV-001", "success", "Extracted OK")
         report.step_completed("extract")
 
-All methods are no-ops when ONDEMAND_WEBHOOK_URL is not set (local runs).
+All methods are no-ops when there is no run context (local runs).
 """
 
 import logging
@@ -24,6 +24,7 @@ import os
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from ondemand.shared.run_context import current_webhook_url
 
 
 class StepStatus(str, Enum):
@@ -45,7 +46,7 @@ def _now() -> str:
 
 def _post(payload: dict) -> bool:
     """POST to the webhook. Returns True on success, False on failure."""
-    webhook_url = os.environ.get("ONDEMAND_WEBHOOK_URL")
+    webhook_url = current_webhook_url()
     if not webhook_url:
         return False
 
