@@ -6,9 +6,19 @@ Usage:
     from ondemand.shared import get_logger, request_approval
 """
 
+from importlib.metadata import PackageNotFoundError, version as _dist_version
+
 from .shared.approval import request_approval, ApprovalRequestError
+
+try:
+    # Read from installed distribution metadata rather than hardcoding, so the
+    # value stays correct when a robot upgrades the package at container start.
+    __version__ = _dist_version("ondemand-ai")
+except PackageNotFoundError:  # running from a source checkout
+    __version__ = "0.0.0.dev0"
 
 __all__ = [
     "request_approval",
     "ApprovalRequestError",
+    "__version__",
 ]

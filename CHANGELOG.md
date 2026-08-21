@@ -2,6 +2,21 @@
 
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
+## [1.8.0] - 2026-08-21
+
+### Added
+- `ondemand.__version__`, read from installed distribution metadata rather than
+  hardcoded, so it reflects a runtime upgrade rather than what was baked into the
+  image at build time.
+- The worker startup log now reports the library version actually loaded.
+- Via `ondemand-obs>=0.1.7`, every span, metric and log carries
+  `ondemand.ai.version` and `ondemand.obs.version` as resource attributes.
+
+  This exists to support robots upgrading the library at container start: once
+  that is enabled the image tag no longer implies which library version is
+  running, and telemetry becomes the only reliable way to answer "which robots
+  are on which version?".
+
 ## [1.7.0] - 2026-08-21
 
 ### Fixed

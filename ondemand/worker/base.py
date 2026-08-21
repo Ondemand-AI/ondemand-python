@@ -164,8 +164,11 @@ class OndemandWorker:
         from ondemand.worker.logging import setup_logging
         setup_logging()
 
+        from ondemand import __version__ as _lib_version
+
         logger.info(
             f"OndemandWorker starting: "
+            f"ondemand-ai={_lib_version}, "
             f"address={config.temporal_address}, "
             f"namespace={config.temporal_namespace}, "
             f"queue={config.task_queue}, "
