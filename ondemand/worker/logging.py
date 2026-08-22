@@ -244,6 +244,26 @@ def setup_logging(level: int = logging.INFO) -> OndemandLogHandler:
         if root.level > level:
             root.setLevel(level)
 
+        # Container stdout. This is the only log channel that survives a SIGKILL
+        # and the only one that works outside a run:
+        #   - the portal/R2 handler discards anything with no run context (see
+        #     OndemandLogHandler.flush), so worker startup and shutdown lines
+        #     never reach it;
+        #   - both the portal handler (threading.Timer) and the OTLP exporter
+        #     (BatchLogRecordProcessor) buffer, so an abrupt kill loses whatever
+        #     has not flushed. atexit covers graceful exit only.
+        # stdout is written line-by-line by the runtime (PYTHONUNBUFFERED=1 in the
+        # robot images), so it is what remains after kubelet SIGKILLs a pod at
+        # terminationGracePeriodSeconds.
+        #
+        # Deliberately stdout, not stderr: setup_logging tees stderr into the
+        # portal handler below, so a stderr handler here would echo every record
+        # back into that buffer and double-log it.
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(OndemandLogFormatter())
+        stream_handler.setLevel(level)
+        root.addHandler(stream_handler)
+
         # t_vault sets propagate=False with its own StreamHandler.
         # Add our handler directly so its logs are captured for the portal.
         t_vault_logger = logging.getLogger("t_vault")
