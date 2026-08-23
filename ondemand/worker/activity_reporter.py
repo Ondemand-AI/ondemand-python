@@ -23,6 +23,8 @@ import logging
 import os
 from datetime import datetime, timezone
 from enum import Enum
+import atexit
+import threading
 from typing import Any, Dict, List, Optional
 from ondemand.shared.run_context import current_webhook_url
 
@@ -44,19 +46,70 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# One client for the process, not one per call.
+#
+# This used to open `httpx.Client()` inside every _post(), which means a fresh
+# TCP connection and a full TLS handshake for every single step transition and
+# every record. A demo run posts ~55 of them (9 step calls per company plus one
+# record per invoice per substep), so it was paying ~55 handshakes to reach the
+# same host. Keep-alive collapses that to one.
+#
+# httpx.Client is safe to share across threads, which matters because sync
+# activities run in the worker's thread pool.
+_client_lock = threading.Lock()
+_client: "Optional[Any]" = None
+
+
+def _get_client():
+    """Lazily build the shared client. Returns None if httpx is unavailable."""
+    global _client
+    if _client is not None:
+        return _client
+    with _client_lock:
+        if _client is None:
+            try:
+                import httpx
+            except Exception as e:  # pragma: no cover
+                logger.debug(f"httpx unavailable, step reports disabled: {e}")
+                return None
+            _client = httpx.Client(
+                timeout=_WEBHOOK_TIMEOUT,
+                # Small pool: a worker talks to exactly one API host.
+                limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
+            )
+            atexit.register(_close_client)
+    return _client
+
+
+def _close_client() -> None:
+    """Release the pool at interpreter exit so sockets are not left dangling."""
+    global _client
+    with _client_lock:
+        if _client is not None:
+            try:
+                _client.close()
+            except Exception:
+                pass
+            _client = None
+
+
 def _post(payload: dict) -> bool:
     """POST to the webhook. Returns True on success, False on failure."""
     webhook_url = current_webhook_url()
     if not webhook_url:
         return False
 
+    client = _get_client()
+    if client is None:
+        return False
+
     try:
-        import httpx
         from ondemand.shared.webhook_auth import webhook_headers
-        with httpx.Client(timeout=_WEBHOOK_TIMEOUT) as client:
-            response = client.post(webhook_url, json=payload, headers=webhook_headers())
-            return response.status_code == 200
+        response = client.post(webhook_url, json=payload, headers=webhook_headers())
+        return response.status_code == 200
     except Exception as e:
+        # A dropped keep-alive connection surfaces here. httpx re-dials on the
+        # next call, so one lost report does not poison the rest of the run.
         logger.debug(f"Webhook POST failed: {e}")
         return False
 
