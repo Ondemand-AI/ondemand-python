@@ -20,7 +20,7 @@ from ondemand.shared.artifacts import (
     save_state,
     load_state,
 )
-from ondemand.shared.approval import request_approval, ApprovalRequestError
+from ondemand.shared.approval import request_approval, fact, ApprovalRequestError
 from ondemand.shared.bitwarden import bw_connect, bw_get_item
 # cli.py removed — old RCC CLI parsing, not used in new Temporal architecture
 from ondemand.shared.logging import get_logger, configure_logging, OndemandLogger
@@ -45,6 +45,7 @@ __all__ = [
     "set_current_task",
     "get_current_task",
     "request_approval",
+    "fact",
     "ApprovalRequestError",
     "bw_connect",
     "bw_get_item",

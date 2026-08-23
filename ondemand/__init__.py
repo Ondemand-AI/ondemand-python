@@ -8,7 +8,7 @@ Usage:
 
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 
-from .shared.approval import request_approval, ApprovalRequestError
+from .shared.approval import request_approval, fact, ApprovalRequestError
 
 try:
     # Read from installed distribution metadata rather than hardcoding, so the
@@ -19,6 +19,7 @@ except PackageNotFoundError:  # running from a source checkout
 
 __all__ = [
     "request_approval",
+    "fact",
     "ApprovalRequestError",
     "__version__",
 ]

@@ -7,11 +7,17 @@ sends notifications however it wants, and then exits the step.
 The Temporal workflow pauses until the human responds.
 
 Usage:
-    from ondemand import request_approval
+    from ondemand import request_approval, fact
 
     approval_url, rejection_url = request_approval(
         message="3 divergências encontradas. Revisar?",
-        data={"total": 15000, "items": [...]},
+        data={
+            "Transações": 1284,
+            "Sem confiança": 18,
+            "Alertas": fact(4, "warn"),      # coloured amber in the portal
+            "Erros": fact(0, "danger"),      # zero is never coloured
+            "Período": "07/2026",
+        },
         show_buttons=True,
     )
 
@@ -42,6 +48,59 @@ class ApprovalRequestError(Exception):
     pass
 
 
+# Tones the portal understands for a fact. Anything else is ignored and the
+# value renders neutral, so a typo degrades rather than breaking the card.
+FACT_TONES = ("ok", "warn", "danger", "info", "neutral")
+
+
+def fact(value: Any, tone: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Mark one entry of an approval's `data` so the portal colours its value.
+
+    The portal renders `data` as a strip of figures above the approve/reject
+    buttons — the numbers the reviewer decides on. By default every figure is
+    neutral; this flags the one that matters.
+
+    A tone colours the value only, never the whole tile: one amber number among
+    four grey ones is what makes it findable, and colouring everything would
+    make none of it stand out.
+
+        data={
+            "Notas fiscais": 9,
+            "Alertas": fact(4, "warn"),
+            "Erros": fact(2, "danger"),
+        }
+
+    Passing a tone is optional. The portal already infers one from common key
+    names (alertas/alerts, erros/errors, falhas/failures, "sem confiança", …),
+    so an existing robot gets sensible colours without changing anything. Use
+    this when the key name would not give it away, or to override the guess.
+
+    Zero is never coloured, whatever the tone: "Alertas: 0" is good news, and
+    an amber zero would cry wolf.
+
+    Args:
+        value: The figure to show. Numbers, strings and booleans render;
+               nested structures are skipped by the portal.
+        tone: One of FACT_TONES, or None to let the portal infer.
+
+    Returns:
+        The dict shape the portal expects for a toned fact.
+    """
+    if tone is not None and tone not in FACT_TONES:
+        # Not fatal — a bad tone should never lose the figure itself.
+        logger.warning(
+            "Unknown approval fact tone %r; rendering neutral. Expected one of %s",
+            tone,
+            ", ".join(FACT_TONES),
+        )
+        tone = None
+    out: Dict[str, Any] = {"value": value}
+    if tone is not None:
+        out["tone"] = tone
+    return out
+
+
 def request_approval(
     message: str,
     data: Optional[Dict[str, Any]] = None,
@@ -63,7 +122,11 @@ def request_approval(
 
     Args:
         message: Human-readable message explaining what needs approval.
-        data: Optional context data for the reviewer (shown in portal UI).
+        data: Figures for the reviewer, rendered as a strip above the
+              approve/reject buttons. Keys become the labels, insertion order is
+              preserved, and the portal caps the strip at 8. Values may be
+              plain (``"Notas": 9``) or toned via ``fact()``
+              (``"Alertas": fact(4, "warn")``). Nested structures are skipped.
         show_buttons: If True, the portal UI shows approve/reject buttons
                       inline. If False, only the external links work.
         step_name: Step name (auto-detected from current task if not provided).
