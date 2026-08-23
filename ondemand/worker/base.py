@@ -28,6 +28,29 @@ from temporalio.worker import Worker, ActivityInboundInterceptor, Interceptor
 logger = logging.getLogger("ondemand.worker")
 
 
+def _resolve_service_name() -> str:
+    """The single source of truth for this robot's telemetry service name.
+
+    Order matters and both entries are set by the deploy pipeline from the same
+    `process_id`, so they agree by construction:
+
+      1. OTEL_SERVICE_NAME — what ondemand-obs and every OTel SDK actually read.
+      2. TEMPORAL_QUEUE    — same value; a safety net if the OTel var is missing,
+                             so telemetry is still filed under the robot's real
+                             name rather than a generic default.
+      3. "ondemand-worker" — local runs with neither set.
+
+    Previously each robot passed its own string to OndemandWorker(name=...) while
+    ondemand-obs read OTEL_SERVICE_NAME, so the name in the code and the name in
+    HyperDX were different values that nothing kept in sync.
+    """
+    return (
+        os.environ.get("OTEL_SERVICE_NAME")
+        or os.environ.get("TEMPORAL_QUEUE")
+        or "ondemand-worker"
+    )
+
+
 class _WorkTracker:
     """Tracks whether this worker is actually doing anything.
 
@@ -280,8 +303,22 @@ class OndemandWorker:
         worker.run()
     """
 
-    def __init__(self, name: str = "ondemand-worker"):
-        self.name = name
+    def __init__(self, name: Optional[str] = None):
+        # The service name is resolved from the environment, not from this
+        # argument — see _resolve_service_name. Robots used to pass a name here
+        # ("demo-automation", "gse-automation") that never reached HyperDX,
+        # because ondemand-obs prefers OTEL_SERVICE_NAME and the deploy pipeline
+        # always sets it. The two drifted silently: telemetry said "demo" while
+        # the code said "demo-automation", which sends you searching for a
+        # service that does not exist.
+        self.name = _resolve_service_name()
+        if name and name != self.name:
+            logger.warning(
+                f"OndemandWorker(name={name!r}) is ignored for telemetry — the "
+                f"service name comes from OTEL_SERVICE_NAME (resolved: "
+                f"{self.name!r}). Drop the argument; it is set by the deploy "
+                f"pipeline from process_id."
+            )
         self.config = WorkerConfig.from_env()
         self._workflows: List[Any] = []
         self._activities: List[Callable] = []
