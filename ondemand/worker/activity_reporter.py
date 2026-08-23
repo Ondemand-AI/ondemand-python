@@ -123,6 +123,7 @@ def _step_report(
     end_time: Optional[str] = None,
     duration_ms: Optional[int] = None,
     record: Optional[dict] = None,
+    summary: Optional[str] = None,
 ) -> bool:
     """Send a STEP_REPORT to the webhook."""
     step_report: Dict[str, Any] = {
@@ -141,6 +142,10 @@ def _step_report(
         step_report["duration_in_ms"] = duration_ms
     if record:
         step_report["record"] = record
+    if summary:
+        # One line the portal shows beside the step, in place of its generic
+        # "N registro(s)" fallback.
+        step_report["summary"] = summary
 
     return _post({
         "client": "ondemand-python",
@@ -180,14 +185,25 @@ class ActivityReporter:
         step_id: str,
         name: str = "",
         parent: Optional[str] = None,
+        summary: Optional[str] = None,
     ) -> None:
-        """Report a step as completed."""
+        """
+        Report a step as completed.
+
+        Args:
+            summary: Optional one-line result shown beside the step in the
+                portal, e.g. "3 notas · R$ 4.500,00" or "1 nota com alertas".
+                Without it the portal can only show "N registro(s)", since a
+                record count is all it actually knows. Keep it short — it sits
+                on a single row next to the duration.
+        """
         _step_report(
             step_id=step_id,
             step_name=name or step_id,
             status=StepStatus.SUCCEEDED,
             parent_step_id=parent,
             end_time=_now(),
+            summary=summary,
         )
 
     def step_failed(
@@ -211,14 +227,22 @@ class ActivityReporter:
         step_id: str,
         name: str = "",
         parent: Optional[str] = None,
+        summary: Optional[str] = None,
     ) -> None:
-        """Report a step as completed with warnings."""
+        """
+        Report a step as completed with warnings.
+
+        Args:
+            summary: Optional one-line result shown beside the step, e.g.
+                "1 nota com alertas". See step_completed.
+        """
         _step_report(
             step_id=step_id,
             step_name=name or step_id,
             status=StepStatus.WARNING,
             parent_step_id=parent,
             end_time=_now(),
+            summary=summary,
         )
 
     def step_skipped(
