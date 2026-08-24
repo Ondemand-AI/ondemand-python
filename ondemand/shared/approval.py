@@ -71,10 +71,16 @@ def fact(value: Any, tone: Optional[str] = None) -> Dict[str, Any]:
             "Erros": fact(2, "danger"),
         }
 
-    Passing a tone is optional. The portal already infers one from common key
-    names (alertas/alerts, erros/errors, falhas/failures, "sem confiança", …),
-    so an existing robot gets sensible colours without changing anything. Use
-    this when the key name would not give it away, or to override the guess.
+    The tone is the ONLY thing that colours a figure. A bare value is always
+    neutral — the portal does not guess from the key name.
+
+    It used to: a table of regexes matched alertas/erros/falhas/sucesso and
+    coloured accordingly, so a robot got colours for free. That was removed
+    because the rule was invisible from both ends. "success_rate" came out green
+    for no reason other than starting with "success", while a key like
+    "notas_recusadas" stayed grey because no pattern happened to cover it — two
+    figures of equal weight, coloured differently, and nothing on screen or in
+    the robot explained why. If a figure should be coloured, say so here.
 
     Zero is never coloured, whatever the tone: "Alertas: 0" is good news, and
     an amber zero would cry wolf.
