@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.10.0] - 2026-08-28
+
+### Added
+
+`ondemand.worker.WorkflowInput` — the workflow input contract, in one place.
+
+Every robot used to redeclare the portal's payload by hand, and they had
+drifted: `ondemand-auto-demo` declared a `webhook_secret` the portal never sends
+(`""` since day one, unnoticed) and ignored `process_code` and
+`organization_id`, while `GSE1-conciliacao-de-contas` declared those two and not
+the secret. Two robots, two contracts for the same payload.
+
+The cost surfaced with the 1.9.0 rename: a change that belongs to the platform
+had to be made in every automation repo. Now it does not — robots upgrade this
+library at container start, so a future contract change reaches them without a
+rebuild.
+
+```python
+from dataclasses import dataclass
+from ondemand.worker import WorkflowInput
+
+@dataclass
+class MyInput(WorkflowInput):
+    @property
+    def period(self) -> str:
+        return self.inputs.get("period", "")
+```
+
+Temporal needs a concrete type to deserialize into, so a robot still declares
+and inherits. What goes away is the duplication of the platform's own fields.
+
+Every field carries a default, `workflow_id` included: Python 3.9 has no
+`kw_only` for dataclasses, and a field without a default cannot follow one that
+has it. Give your own fields defaults too.
+
 ## [1.9.0] - 2026-08-28
 
 ### Changed — BREAKING

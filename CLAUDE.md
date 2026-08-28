@@ -58,6 +58,30 @@ from ondemand.shared import get_logger
 
 See `CHANGELOG.md` for version history.
 
+## Workflow input contract
+
+`ondemand.worker.WorkflowInput` holds the fields the portal sends on every
+start. Robots **subclass** it and declare only what is theirs:
+
+```python
+from ondemand.worker import WorkflowInput
+
+@dataclass
+class MyInput(WorkflowInput):
+    @property
+    def period(self) -> str:
+        return self.inputs.get("period", "")
+```
+
+Never redeclare `workflow_id`, `process_code`, `organization_id`,
+`webhook_url` or `inputs` in a robot. That duplication is why the 1.9.0 rename
+had to touch every automation repo; with the contract here, the next change
+reaches robots through the container-start upgrade with no rebuild.
+
+Every field has a default, `workflow_id` included — Python 3.9 has no `kw_only`
+for dataclasses, so a field without a default cannot follow one that has it.
+Give robot-specific fields defaults too.
+
 ## Identifier vocabulary — Workflow ID vs Run ID
 
 The platform uses **Temporal's own names**, everywhere, for the two identifiers
