@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.9.0] - 2026-08-28
+
+### Changed — BREAKING
+
+Adopted Temporal's vocabulary for the two identifiers of a Workflow Execution.
+Temporal identifies one by a **pair**: the Workflow ID (the business identifier
+the caller chooses — for us `process_runs.id`) and the Run ID (a
+server-generated UUID for ONE execution of it, new on retry, continue-as-new,
+cron tick or reset). The library called the first one "run id" and had no name
+for the second, which collided with Temporal's own `TemporalWorkflowID` /
+`TemporalRunID` span attributes and made a run impossible to follow in HyperDX.
+
+- `current_run_id()` → `current_workflow_id()`
+- `set_run_id()` / `get_run_id()` → `set_workflow_id()` / `get_workflow_id()`
+- `ONDEMAND_RUN_ID` → `ONDEMAND_WORKFLOW_ID`
+- `download_input_files(..., run_id=)` → `workflow_id=`
+- Robot workflow input field `run_id` → `workflow_id`
+- Log attributes exported to HyperDX are now `TemporalWorkflowID` and
+  `TemporalRunID`, matching what Temporal's interceptor writes on spans
+
+### Added
+
+- `current_temporal_run_id()` — the Run ID of the current execution.
+- R2 artifact keys are partitioned by attempt:
+  `artifacts/{workflow_id}/{temporal_run_id}/…` when the Run ID is known. A
+  workflow retry writes the same filenames, and without the segment the second
+  attempt would overwrite the first one's artifacts. Listing is by prefix and
+  therefore recursive, so the portal keeps seeing everything under a workflow;
+  objects written before this change are unaffected.
+
+### Migration
+
+No fallback is provided — every robot must move together. Rename the workflow
+input field in the robot's dataclass and any `input.run_id` reads. Requires
+ondemand-obs >= 0.1.8 and the portal API from ondemand-infra 2026-08-28.
+
 All notable changes to the `ondemand-ai` package will be documented in this file.
 
 ## [1.8.0] - 2026-08-21

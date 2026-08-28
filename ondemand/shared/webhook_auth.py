@@ -1,6 +1,6 @@
 """Authentication headers for calls to the Ondemand supervisor webhook.
 
-Every sender in this library posts to `/api/webhooks/supervisor/{run_id}`, but
+Every sender in this library posts to `/api/webhooks/supervisor/{workflow_id}`, but
 only `request_approval` ever sent an Authorization header — step reports, log
 streaming and artifact notifications sent none. The API side could therefore
 never enforce authentication without breaking three of the four senders, so it

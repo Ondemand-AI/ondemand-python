@@ -4,7 +4,7 @@ OndemandWorker — base class for automation workers.
 Handles:
 - Temporal connection and activity/workflow registration
 - Graceful shutdown on SIGTERM (KEDA scale-down)
-- Publishes ONDEMAND_RUN_ID / ONDEMAND_WEBHOOK_URL via activity interceptor
+- Publishes ONDEMAND_WORKFLOW_ID / ONDEMAND_WEBHOOK_URL via activity interceptor
   (fallback only — in-process code should use ondemand.shared.run_context)
 - Auto-sets up log capture via OndemandLogHandler
 """
@@ -111,12 +111,12 @@ class _OndemandActivityInterceptor(ActivityInboundInterceptor):
 
     async def execute_activity(self, input):
         info = activity.info()
-        run_id = info.workflow_id
+        workflow_id = info.workflow_id
         app_url = os.environ.get("ONDEMAND_APP_URL", "")
 
-        os.environ["ONDEMAND_RUN_ID"] = run_id
+        os.environ["ONDEMAND_WORKFLOW_ID"] = workflow_id
         if app_url:
-            os.environ["ONDEMAND_WEBHOOK_URL"] = f"{app_url}/api/webhooks/supervisor/{run_id}"
+            os.environ["ONDEMAND_WEBHOOK_URL"] = f"{app_url}/api/webhooks/supervisor/{workflow_id}"
 
         interval = float(os.environ.get("ONDEMAND_HEARTBEAT_SECONDS", 10.0))
 

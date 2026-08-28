@@ -14,7 +14,11 @@ import logging
 import mimetypes
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from ondemand.shared.run_context import current_run_id, current_webhook_url
+from ondemand.shared.run_context import (
+    current_workflow_id,
+    current_temporal_run_id,
+    current_webhook_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -191,10 +195,19 @@ class R2StorageClient:
         """
         Upload raw content to R2 and notify the portal.
 
-        The R2 key is automatically built as {run_id}/{folder}/{filename}.
-        run_id comes from ondemand.shared.run_context (the activity context when
-        available, else ONDEMAND_RUN_ID). If there is no run, the upload is
-        skipped silently.
+        The R2 key is built as artifacts/{workflow_id}/{folder}/{filename}, or
+        artifacts/{workflow_id}/{temporal_run_id}/{folder}/{filename} when the
+        Temporal Run ID is known.
+
+        The Run ID segment keeps attempts apart: a workflow retry writes the
+        same filenames, and without it the second attempt would overwrite the
+        first one's artifacts. Listing is by prefix and therefore recursive, so
+        the portal keeps seeing everything under a workflow either way — objects
+        written before this change are unaffected.
+
+        Both ids come from ondemand.shared.workflow context (the activity
+        context when available, else ONDEMAND_WORKFLOW_ID). If there is no
+        workflow, the upload is skipped silently.
 
         Args:
             content: Raw bytes to upload
@@ -206,13 +219,17 @@ class R2StorageClient:
         Returns:
             Dict with upload result, or None if skipped (local run)
         """
-        run_id = current_run_id()
-        if not run_id:
-            logger.warning("No run context (local run) — skipping upload")
+        workflow_id = current_workflow_id()
+        if not workflow_id:
+            logger.warning("No workflow context (local run) — skipping upload")
             return None
 
-        # Build key: artifacts/{run_id}/{folder}/{filename}
-        key = f"artifacts/{run_id}/{folder}/{filename}" if folder else f"artifacts/{run_id}/{filename}"
+        # artifacts/{workflow_id}[/{temporal_run_id}]/{folder}/{filename}
+        prefix = f"artifacts/{workflow_id}"
+        temporal_run_id = current_temporal_run_id()
+        if temporal_run_id:
+            prefix = f"{prefix}/{temporal_run_id}"
+        key = f"{prefix}/{folder}/{filename}" if folder else f"{prefix}/{filename}"
 
         client = self._get_client()
 
@@ -281,7 +298,7 @@ class R2StorageClient:
         self,
         local_dir: Path,
         prefix: str,
-        run_id: str,
+        workflow_id: str,
     ) -> List[Dict[str, Any]]:
         """
         Upload all files from a directory to R2, preserving folder structure.
@@ -289,7 +306,7 @@ class R2StorageClient:
         Args:
             local_dir: Local directory to upload
             prefix: Prefix for S3 keys (e.g., "artifacts")
-            run_id: Run ID for organizing artifacts
+            workflow_id: Temporal Workflow ID, for organizing artifacts
 
         Returns:
             List of uploaded file info dicts
@@ -307,15 +324,15 @@ class R2StorageClient:
                 # Create relative path from local_dir
                 relative_path = file_path.relative_to(local_dir)
 
-                # Build S3 key: prefix/run_id/relative_path
-                key = f"{prefix}/{run_id}/{relative_path}".replace("\\", "/")
+                # Build S3 key: prefix/workflow_id/relative_path
+                key = f"{prefix}/{workflow_id}/{relative_path}".replace("\\", "/")
 
                 try:
                     result = self.upload_file(
                         file_path,
                         key,
                         metadata={
-                            "run-id": run_id,
+                            "workflow-id": workflow_id,
                             "original-path": str(relative_path),
                         },
                     )
@@ -335,7 +352,7 @@ def notify_artifacts_uploaded(
     """
     Notify the portal that artifacts were uploaded to R2.
     Posts to the supervisor webhook with ARTIFACTS_UPLOADED action.
-    run_id and webhook_url come from ondemand.shared.run_context.
+    workflow_id and webhook_url come from ondemand.shared.run_context.
 
     Args:
         artifacts: List of artifact dicts (key, filename, folder, size, mime_type)
@@ -344,9 +361,9 @@ def notify_artifacts_uploaded(
         True if webhook succeeded, False otherwise
     """
     webhook_url = current_webhook_url()
-    run_id = current_run_id()
+    workflow_id = current_workflow_id()
 
-    if not webhook_url or not run_id:
+    if not webhook_url or not workflow_id:
         logger.debug("No webhook URL or run ID — skipping artifact notification")
         return False
 
@@ -391,7 +408,7 @@ def get_r2_client() -> R2StorageClient:
 
 def upload_run_artifacts(
     output_dir: Path,
-    run_id: str,
+    workflow_id: str,
     prefix: str = "artifacts",
 ) -> List[Dict[str, Any]]:
     """
@@ -399,7 +416,7 @@ def upload_run_artifacts(
 
     Args:
         output_dir: Base output directory containing task folders
-        run_id: Run ID
+        workflow_id: Temporal Workflow ID
         prefix: S3 key prefix (default: "artifacts")
 
     Returns:
@@ -414,7 +431,7 @@ def upload_run_artifacts(
     logger.info(f"Uploading artifacts from {output_dir} to R2...")
 
     try:
-        uploaded = client.upload_directory(output_dir, prefix, run_id)
+        uploaded = client.upload_directory(output_dir, prefix, workflow_id)
         logger.info(f"Successfully uploaded {len(uploaded)} artifacts to R2")
         return uploaded
     except Exception as e:
@@ -424,7 +441,7 @@ def upload_run_artifacts(
 
 def upload_task_artifacts(
     task_output_dir: Path,
-    run_id: str,
+    workflow_id: str,
     task_name: str,
     prefix: str = "artifacts",
     exclude: Optional[List[str]] = None,
@@ -435,8 +452,8 @@ def upload_task_artifacts(
     This is called after each task completes to enable incremental artifact uploads.
 
     Args:
-        task_output_dir: Task-specific output directory (e.g., output/{run_id}/{task}/)
-        run_id: Run ID
+        task_output_dir: Task-specific output directory (e.g., output/{workflow_id}/{task}/)
+        workflow_id: Temporal Workflow ID
         task_name: Name of the task (used for folder organization)
         prefix: S3 key prefix (default: "artifacts")
         exclude: List of filenames to skip (e.g., ["console.txt"])
@@ -467,15 +484,15 @@ def upload_task_artifacts(
             # Create relative path from task_output_dir
             relative_path = file_path.relative_to(task_output_dir)
 
-            # Build S3 key: prefix/run_id/task_name/relative_path
-            key = f"{prefix}/{run_id}/{task_name}/{relative_path}".replace("\\", "/")
+            # Build S3 key: prefix/workflow_id/task_name/relative_path
+            key = f"{prefix}/{workflow_id}/{task_name}/{relative_path}".replace("\\", "/")
 
             try:
                 result = client.upload_file(
                     file_path,
                     key,
                     metadata={
-                        "run-id": run_id,
+                        "workflow-id": workflow_id,
                         "task": task_name,
                         "original-path": str(relative_path),
                     },
@@ -498,7 +515,7 @@ def upload_task_artifacts(
 
 def upload_root_artifacts(
     base_output_dir: Path,
-    run_id: str,
+    workflow_id: str,
     prefix: str = "artifacts",
     exclude: Optional[List[str]] = None,
     skip_subdirs: Optional[set] = None,
@@ -511,8 +528,8 @@ def upload_root_artifacts(
     and excluded filenames.
 
     Args:
-        base_output_dir: Base output directory (e.g., output/{run_id}/)
-        run_id: Run ID
+        base_output_dir: Base output directory (e.g., output/{workflow_id}/)
+        workflow_id: Temporal Workflow ID
         prefix: S3 key prefix (default: "artifacts")
         exclude: List of filenames to skip
         skip_subdirs: Set of immediate subdirectory names to skip
@@ -547,14 +564,14 @@ def upload_root_artifacts(
         if len(relative.parts) > 1 and relative.parts[0] in skip_set:
             continue
 
-        key = f"{prefix}/{run_id}/{relative}".replace("\\", "/")
+        key = f"{prefix}/{workflow_id}/{relative}".replace("\\", "/")
 
         try:
             result = client.upload_file(
                 file_path,
                 key,
                 metadata={
-                    "run-id": run_id,
+                    "workflow-id": workflow_id,
                     "original-path": str(relative),
                 },
             )
@@ -577,7 +594,7 @@ def upload_root_artifacts(
 def download_input_files(
     inputs: Dict[str, Any],
     dest_dir: Path,
-    run_id: Optional[str] = None,
+    workflow_id: Optional[str] = None,
     artifacts_prefix: str = "artifacts",
 ) -> Dict[str, Any]:
     """
@@ -586,14 +603,14 @@ def download_input_files(
     Scans the inputs dict for values that look like R2 storage keys
     (starting with 'inputs/') and downloads each to dest_dir.
 
-    If run_id is provided, also copies each file to the artifacts folder
-    (artifacts/{run_id}/inputs/{filename}) so they appear in the run's
+    If workflow_id is provided, also copies each file to the artifacts folder
+    (artifacts/{workflow_id}/inputs/{filename}) so they appear in the run's
     artifacts tab. The temp originals are kept for retry support.
 
     Args:
         inputs: The ONDEMAND_INPUTS dict (or subset)
         dest_dir: Local directory to save downloaded files
-        run_id: Optional run ID for copying files to artifacts
+        workflow_id: Optional run ID for copying files to artifacts
         artifacts_prefix: R2 key prefix for artifacts (default: "artifacts")
 
     Returns:

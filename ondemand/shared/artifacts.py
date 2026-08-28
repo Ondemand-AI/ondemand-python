@@ -1,8 +1,8 @@
 """
 Artifact management for passing data between tasks.
 
-Each run is isolated by run_id, and each task has its own output folder.
-- Output directory: output/{run_id}/{task}/
+Each run is isolated by workflow_id, and each task has its own output folder.
+- Output directory: output/{workflow_id}/{task}/
 - Artifacts can be loaded from any task by specifying the task name
 """
 
@@ -12,24 +12,24 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
-from ondemand.shared.run_context import current_run_id
+from ondemand.shared.run_context import current_workflow_id
 
 # Global state
-_run_id: Optional[str] = None
+_workflow_id: Optional[str] = None
 _current_task: Optional[str] = None
 
 
 @dataclass
 class RunInfo:
     """Context information about the current run."""
-    run_id: str
+    workflow_id: str
     process_code: str
     organization_id: str
     started_at: str  # ISO format datetime string
 
     def to_dict(self) -> dict:
         return {
-            "run_id": self.run_id,
+            "workflow_id": self.workflow_id,
             "process_code": self.process_code,
             "organization_id": self.organization_id,
             "started_at": self.started_at,
@@ -39,27 +39,27 @@ class RunInfo:
 def get_run_info() -> RunInfo:
     """Get context information about the current run.
 
-    Returns a RunInfo with run_id, process_code, organization_id, and started_at.
+    Returns a RunInfo with workflow_id, process_code, organization_id, and started_at.
     Values come from environment variables set by the Temporal worker.
     In local/standalone mode, returns defaults.
     """
     return RunInfo(
-        run_id=current_run_id() or get_run_id(),
+        workflow_id=current_workflow_id() or get_workflow_id(),
         process_code=os.environ.get("ONDEMAND_PROCESS_CODE", "local"),
         organization_id=os.environ.get("ONDEMAND_ORGANIZATION_ID", "local"),
         started_at=datetime.utcnow().isoformat(),
     )
 
 
-def set_run_id(run_id: str) -> None:
+def set_workflow_id(workflow_id: str) -> None:
     """Set the run ID for this execution."""
-    global _run_id
-    _run_id = run_id
+    global _workflow_id
+    _workflow_id = workflow_id
 
 
-def get_run_id() -> str:
+def get_workflow_id() -> str:
     """Get the current run ID, defaults to 'local' for standalone runs."""
-    return _run_id or "local"
+    return _workflow_id or "local"
 
 
 def set_current_task(task: Optional[str]) -> None:
@@ -75,12 +75,12 @@ def get_current_task() -> Optional[str]:
 
 def get_base_output_dir() -> Path:
     """
-    Get the base run output directory (output/{run_id}/).
+    Get the base run output directory (output/{workflow_id}/).
 
     Use this for artifacts that need to be shared across all tasks,
     like dynamic_manifest.yaml.
     """
-    output_dir = Path("output") / get_run_id()
+    output_dir = Path("output") / get_workflow_id()
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
@@ -94,9 +94,9 @@ def get_output_dir(task: Optional[str] = None) -> Path:
               If no current task is set, returns base run directory.
 
     Returns:
-        Path to output/{run_id}/{task}/ or output/{run_id}/ if no task
+        Path to output/{workflow_id}/{task}/ or output/{workflow_id}/ if no task
     """
-    base_dir = Path("output") / get_run_id()
+    base_dir = Path("output") / get_workflow_id()
 
     # Use provided task, or fall back to current task
     effective_task = task or _current_task
@@ -122,7 +122,7 @@ def save_artifact(data: Union[dict, list], filename: str = "state.json") -> Path
         Path to the saved artifact file
 
     Examples:
-        # In Initialize task, saves to output/{run_id}/Initialize/state.json
+        # In Initialize task, saves to output/{workflow_id}/Initialize/state.json
         save_artifact({"companies": companies})
 
         # Save with custom filename

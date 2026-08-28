@@ -33,7 +33,11 @@ from typing import List, Optional
 # importing it registers the level name and patches the base Logger class.
 # Re-exported here so `from ondemand.worker.logging import SUCCESS` keeps working.
 from ondemand.shared.logging import SUCCESS  # noqa: F401
-from ondemand.shared.run_context import current_run_id, current_webhook_url
+from ondemand.shared.run_context import (
+    current_workflow_id,
+    current_temporal_run_id,
+    current_webhook_url,
+)
 
 _handler: Optional["OndemandLogHandler"] = None
 _lock = threading.Lock()
@@ -100,9 +104,9 @@ class OndemandLogHandler(logging.Handler):
 
         # Read env vars lazily — they may be set by the first activity at runtime
         webhook_url = current_webhook_url()
-        run_id = current_run_id()
+        workflow_id = current_workflow_id()
 
-        if not webhook_url or not run_id:
+        if not webhook_url or not workflow_id:
             self._buffer = []
             return
 
@@ -137,21 +141,29 @@ class OndemandLogHandler(logging.Handler):
         self._buffer = []
 
 
-class _RunContextFilter(logging.Filter):
-    """Stamp the Temporal run context onto every record bound for HyperDX.
+class _WorkflowContextFilter(logging.Filter):
+    """Stamp Temporal's identifier pair onto every record bound for HyperDX.
 
     OTel's LoggingHandler copies non-reserved LogRecord attributes into log
     attributes, so anything set here becomes filterable in HyperDX —
-    e.g. run_id:"7f3a…" to isolate a single execution.
+    e.g. TemporalWorkflowID:"7f3a…" to isolate a single workflow.
 
-    The run id is resolved by ondemand.shared.run_context, which prefers the
-    per-task activity context over the process-global ONDEMAND_RUN_ID.
+    The names are Temporal's own, matching what its TracingInterceptor writes on
+    spans, so one filter reaches spans and logs across every service instead of
+    each layer inventing its own spelling.
+
+    The Workflow ID is resolved by ondemand.shared.run_context, which prefers
+    the per-task activity context over the process-global ONDEMAND_WORKFLOW_ID.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        run_id = current_run_id()
-        if run_id:
-            record.run_id = run_id
+        workflow_id = current_workflow_id()
+        if workflow_id:
+            record.TemporalWorkflowID = workflow_id
+
+        temporal_run_id = current_temporal_run_id()
+        if temporal_run_id:
+            record.TemporalRunID = temporal_run_id
 
         try:
             from temporalio import activity
@@ -279,10 +291,10 @@ def setup_logging(level: int = logging.INFO) -> OndemandLogHandler:
             import ondemand_obs
             otlp_handler = ondemand_obs.get_otlp_log_handler()
             if otlp_handler is not None:
-                # Tag every exported record with run_id so HyperDX can filter
-                # by execution. Scoped to this handler so the portal/R2 path
-                # is untouched.
-                otlp_handler.addFilter(_RunContextFilter())
+                # Tag every exported record with the Temporal pair so HyperDX
+                # can filter by workflow or by attempt. Scoped to this handler
+                # so the portal/R2 path is untouched.
+                otlp_handler.addFilter(_WorkflowContextFilter())
                 root.addHandler(otlp_handler)
         except ImportError:
             pass
