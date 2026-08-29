@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.10.1] - 2026-08-28
+
+### Changed
+
+A failing Workflow Task now exports at ERROR instead of WARNING.
+
+temporalio logs `Failed activation on workflow ...` at WARNING, tagged
+`__temporal_error_identifier: WorkflowTaskFailure`. That level is defensible
+from its side — the task is retried forever and a corrected deploy resolves it.
+From ours it is not: the worker could not process the task at all (arguments
+that will not deserialize, a crash before user code, a non-determinism error),
+the workflow stays RUNNING, and the portal reads "executando" for a run that
+never started — until the 31-day execution timeout.
+
+Matched on the identifier rather than the message text, which is an f-string
+that can change between SDK releases. `ActivityFailure` is deliberately left at
+its own level: activities have a RetryPolicy, transient failures there are
+normal, and promoting them would fill the error feed with noise that resolves
+itself.
+
 ## [1.10.0] - 2026-08-28
 
 ### Added

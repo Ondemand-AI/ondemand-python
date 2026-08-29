@@ -141,6 +141,39 @@ class OndemandLogHandler(logging.Handler):
         self._buffer = []
 
 
+# temporalio tags its two failure logs with a stable identifier. Matching on
+# that beats matching the message text, which is an f-string that can change
+# between SDK releases.
+_TEMPORAL_ERROR_ID = "__temporal_error_identifier"
+
+# A failing Workflow Task means the worker could not process the task AT ALL —
+# arguments that will not deserialize, a crash before user code runs, a
+# non-determinism error. Temporal retries it forever by design and the workflow
+# stays RUNNING, so nothing else about the run looks wrong.
+#
+# temporalio logs it at WARNING, which is defensible from its side: the task is
+# retriable and a corrected deploy resolves it. From ours it is not — the run is
+# stuck, it will read as "executando" until the 31-day execution timeout, and
+# somebody has to go look. Promote it so it lands in the error feed and in any
+# alert built on level.
+#
+# ActivityFailure is deliberately left alone: activities have a RetryPolicy,
+# transient failures there are normal and expected, and promoting them would
+# fill the error feed with noise that resolves itself.
+_PROMOTE_TO_ERROR = {"WorkflowTaskFailure"}
+
+
+class _TemporalFailureLevelFilter(logging.Filter):
+    """Raise Temporal's stuck-workflow warning to ERROR."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        identifier = getattr(record, _TEMPORAL_ERROR_ID, None)
+        if identifier in _PROMOTE_TO_ERROR and record.levelno < logging.ERROR:
+            record.levelno = logging.ERROR
+            record.levelname = "ERROR"
+        return True
+
+
 class _WorkflowContextFilter(logging.Filter):
     """Stamp Temporal's identifier pair onto every record bound for HyperDX.
 
@@ -295,6 +328,7 @@ def setup_logging(level: int = logging.INFO) -> OndemandLogHandler:
                 # can filter by workflow or by attempt. Scoped to this handler
                 # so the portal/R2 path is untouched.
                 otlp_handler.addFilter(_WorkflowContextFilter())
+                otlp_handler.addFilter(_TemporalFailureLevelFilter())
                 root.addHandler(otlp_handler)
         except ImportError:
             pass
