@@ -51,7 +51,20 @@ class OndemandLogHandler(logging.Handler):
     Lines are also batched and POSTed to the webhook for real-time portal display.
     """
 
-    FLUSH_BATCH_SIZE = 3
+    # Two conditions send a batch: this many lines, OR the interval below.
+    #
+    # At 3 the batch always won — a robot writes far more than three lines in
+    # two seconds, so the timer never got to count and every third line became
+    # an HTTP request. Measured 2026-08-28: one demo run produced 132 webhook
+    # POSTs in a minute, and since the API looks the run up before dispatching
+    # on action, each one cost a SELECT it then threw away. 172 of the 445
+    # queries that minute were that lookup.
+    #
+    # At 50 the interval becomes the thing that fires, which is what was
+    # intended all along: the portal console still trails by at most
+    # FLUSH_INTERVAL_SECONDS, and the request count drops by roughly a factor
+    # of ten. Only raise the interval if you want a slower live console.
+    FLUSH_BATCH_SIZE = 50
     FLUSH_INTERVAL_SECONDS = 2.0
     WEBHOOK_TIMEOUT = 5.0
 

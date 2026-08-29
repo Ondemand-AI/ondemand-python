@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.10.2] - 2026-08-28
+
+### Changed
+
+`FLUSH_BATCH_SIZE` 3 → 50 in the log handler.
+
+Two conditions send a batch: the line count or `FLUSH_INTERVAL_SECONDS`. At 3
+the count always won — a robot writes far more than three lines in two seconds,
+so the timer never counted and every third line became an HTTP request.
+Measured 2026-08-28: one demo run produced 132 webhook POSTs in a minute, and
+because the API resolves the run before dispatching on action, each cost a
+SELECT it discarded. 172 of that minute's 445 queries were that lookup.
+
+At 50 the interval fires instead, which is what it was for: the portal console
+still trails by at most two seconds and the request count drops by roughly ten.
+
 ## [1.10.1] - 2026-08-28
 
 ### Changed
