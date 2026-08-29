@@ -123,6 +123,7 @@ def _step_report(
     end_time: Optional[str] = None,
     duration_ms: Optional[int] = None,
     record: Optional[dict] = None,
+    records: Optional[list] = None,
     summary: Optional[str] = None,
 ) -> bool:
     """Send a STEP_REPORT to the webhook."""
@@ -142,6 +143,10 @@ def _step_report(
         step_report["duration_in_ms"] = duration_ms
     if record:
         step_report["record"] = record
+    if records:
+        # Plural: a whole step's worth of records in one request. The API
+        # accepts either; `record` stays for older robots.
+        step_report["records"] = records
     if summary:
         # One line the portal shows beside the step, in place of its generic
         # "N registro(s)" fallback.
@@ -161,9 +166,27 @@ class ActivityReporter:
     """
     Sends step updates directly to the portal via webhook.
 
-    Each method fires immediately — no batching, no accumulation.
-    Used inside Temporal activities for real-time step progress.
+    Step transitions fire immediately — they are what the portal shows live.
+    Records are buffered per step and sent together, because they are not.
+
+    Why the split: a step going running -> completed is progress somebody is
+    watching. A record is an audit line for one processed item; nobody reads
+    them one at a time while the robot runs, and they were half the traffic.
+    Measured 2026-08-29 on one demo run: 55 STEP_REPORT posts, of which 28 were
+    step transitions and 27 were individual records.
+
+    Records flush when the step reaches a terminal state, and every
+    RECORD_BATCH_SIZE before that so a worker killed mid-step loses at most
+    that many rather than all of them.
     """
+
+    #: Records held before forcing a send. Bounds what a killed pod can lose.
+    RECORD_BATCH_SIZE = 50
+
+    def __init__(self) -> None:
+        # step_id -> records awaiting a send. Process-local, which is correct:
+        # one worker owns a step for its duration.
+        self._records: Dict[str, list] = {}
 
     def step_started(
         self,
@@ -187,6 +210,9 @@ class ActivityReporter:
         parent: Optional[str] = None,
         summary: Optional[str] = None,
     ) -> None:
+        # Before the transition, so the API has every record by the time the
+        # step is marked done — the portal reads them together.
+        self.flush_records(step_id)
         """
         Report a step as completed.
 
@@ -213,6 +239,9 @@ class ActivityReporter:
         error: str = "",
         parent: Optional[str] = None,
     ) -> None:
+        # Flushed on failure too: the records processed before the error are
+        # exactly what someone debugging it needs.
+        self.flush_records(step_id)
         """Report a step as failed."""
         _step_report(
             step_id=step_id,
@@ -267,17 +296,30 @@ class ActivityReporter:
         message: str = "",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Add a record to a step (individual item result)."""
-        _step_report(
-            step_id=step_id,
-            step_name=step_id,
-            status=StepStatus.RUNNING,  # step stays running while records are added
-            record={
+        """Buffer a record for a step. Sent when the step ends, or every
+        RECORD_BATCH_SIZE, whichever comes first."""
+        buffered = self._records.setdefault(step_id, [])
+        buffered.append(
+            {
                 "id": record_id,
                 "status": status,
                 "message": message,
                 "metadata": metadata or {},
-            },
+            }
+        )
+        if len(buffered) >= self.RECORD_BATCH_SIZE:
+            self.flush_records(step_id)
+
+    def flush_records(self, step_id: str) -> None:
+        """Send everything buffered for a step, if anything is."""
+        buffered = self._records.pop(step_id, None)
+        if not buffered:
+            return
+        _step_report(
+            step_id=step_id,
+            step_name=step_id,
+            status=StepStatus.RUNNING,  # the step's own transition is a separate report
+            records=buffered,
         )
 
 

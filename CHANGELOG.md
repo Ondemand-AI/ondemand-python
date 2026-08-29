@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.11.0] - 2026-08-29
+
+### Changed
+
+Records are buffered per step and sent together, instead of one POST each.
+
+Step transitions still fire immediately — those are what the portal shows live.
+A record is an audit line for one processed item; nobody reads them one at a
+time while the robot runs, and they were half the traffic. Measured on one demo
+run: 55 STEP_REPORT posts, 28 step transitions and 27 individual records.
+
+Flushed when the step reaches a terminal state, and every `RECORD_BATCH_SIZE`
+(50) before that, so a worker killed mid-step loses at most that many rather
+than all of them. `ActivityReporter.flush_records(step_id)` is public for
+robots that want to force one.
+
+Requires the ondemand-infra API from 2026-08-29, which accepts both `record`
+(one) and `records` (a batch). Older robots keep working — the two shapes
+coexist for as long as a warm pod stays on an older library.
+
 ## [1.10.2] - 2026-08-28
 
 ### Changed
