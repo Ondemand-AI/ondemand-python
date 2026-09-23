@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.12.3] - 2026-09-23
+
+### Fixed
+
+`RunPodClient.provision_pod` no longer passes `container_registry_auth_id` to the
+SDK's `create_pod` (the 1.10.0 SDK rejects it: `TypeError: create_pod() got an
+unexpected keyword argument`). Instead it builds the pod-deploy GraphQL mutation
+via the SDK's own generator, injects `containerRegistryAuthId`, and runs it
+through the SDK's GraphQL client — so a PRIVATE GHCR image can be pulled. This is
+the first real end-to-end training path fix.
+
 ## [1.12.2] - 2026-09-23
 
 ### Changed

@@ -160,39 +160,58 @@ class RunPodClient:
         """Create an on-demand GPU pod and return its handle (not yet ready).
 
         Prefer ``dedicated_pod`` (context manager) so teardown is guaranteed even
-        on failure. VERIFY: create_pod signature against the pinned SDK.
+        on failure.
 
         ``registry_auth_id`` is the RunPod container-registry credential id used
         to pull a PRIVATE image (our GHCR image is private). Defaults to the
-        RUNPOD_CONTAINER_REGISTRY_AUTH_ID env var. Register the credential once in
-        RunPod (a GitHub PAT with read:packages) and set that id.
+        RUNPOD_CONTAINER_REGISTRY_AUTH_ID env var.
+
+        The runpod SDK's ``create_pod`` (1.10.0) does not expose
+        ``containerRegistryAuthId``, so we build the same GraphQL mutation the SDK
+        builds (via its own generator, keeping all formatting correct) and inject
+        that one field, then run it through the SDK's GraphQL client.
         """
         self._ensure_key()
         registry_auth_id = registry_auth_id or os.environ.get("RUNPOD_CONTAINER_REGISTRY_AUTH_ID")
-        kwargs: Dict[str, Any] = {
+
+        from runpod.api.mutations import pods as _pod_mutations
+        from runpod.api import graphql as _runpod_graphql
+
+        gen_kwargs: Dict[str, Any] = {
             "name": name,
             "image_name": image,
             "gpu_type_id": gpu_type,
             "cloud_type": cloud_type,
-            "ports": ports,
+            "gpu_count": 1,
             "container_disk_in_gb": container_disk_gb,
+            "ports": ports,
+            "volume_mount_path": volume_mount_path,
             "env": env or {},
         }
-        if registry_auth_id:
-            kwargs["container_registry_auth_id"] = registry_auth_id  # VERIFY field name
         if volume_id:
-            kwargs["network_volume_id"] = volume_id
-            kwargs["volume_mount_path"] = volume_mount_path
+            gen_kwargs["network_volume_id"] = volume_id
         elif volume_gb:
-            kwargs["volume_in_gb"] = volume_gb
-            kwargs["volume_mount_path"] = volume_mount_path
+            gen_kwargs["volume_in_gb"] = volume_gb
         if self.region:
-            kwargs["data_center_id"] = self.region  # VERIFY field name
+            gen_kwargs["data_center_id"] = self.region
 
-        pod = _runpod_sdk.create_pod(**kwargs)
-        pod_id = pod["id"] if isinstance(pod, dict) else pod
+        mutation = _pod_mutations.generate_pod_deployment_mutation(**gen_kwargs)
+        if registry_auth_id:
+            # Inject the field the SDK generator omits, right after imageName.
+            anchor = f'imageName: "{image}"'
+            mutation = mutation.replace(
+                anchor,
+                f'{anchor}\n        containerRegistryAuthId: "{registry_auth_id}"',
+                1,
+            )
+
+        raw = _runpod_graphql.run_graphql_query(mutation)
+        if isinstance(raw, dict) and raw.get("errors"):
+            raise RuntimeError(f"RunPod pod create failed: {raw['errors']}")
+        pod = raw["data"]["podFindAndDeployOnDemand"]
+        pod_id = pod["id"]
         logger.info("Provisioned RunPod pod %s (%s on %s)", name, pod_id, gpu_type)
-        return PodHandle(id=pod_id, mode="dedicated", raw=pod if isinstance(pod, dict) else {})
+        return PodHandle(id=pod_id, mode="dedicated", raw=pod)
 
     def wait_pod_ready(
         self,
