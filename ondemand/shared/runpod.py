@@ -177,6 +177,22 @@ class RunPodClient:
         from runpod.api.mutations import pods as _pod_mutations
         from runpod.api import graphql as _runpod_graphql
 
+        # The SDK's mutation generator interpolates env values into the GraphQL
+        # string WITHOUT escaping (env: [{ key: "K", value: "V" }]). A value with
+        # a double quote (e.g. HYPERPARAMS_JSON, which is JSON) breaks the query
+        # ("Syntax Error: Expected ':'"). Escape backslash, quote and newlines so
+        # any value survives the string literal.
+        def _esc(v: Any) -> str:
+            return (
+                str(v)
+                .replace("\\", "\\\\")
+                .replace('"', '\\"')
+                .replace("\n", "\\n")
+                .replace("\r", "")
+            )
+
+        safe_env = {k: _esc(v) for k, v in (env or {}).items()}
+
         gen_kwargs: Dict[str, Any] = {
             "name": name,
             "image_name": image,
@@ -186,7 +202,7 @@ class RunPodClient:
             "container_disk_in_gb": container_disk_gb,
             "ports": ports,
             "volume_mount_path": volume_mount_path,
-            "env": env or {},
+            "env": safe_env,
         }
         if volume_id:
             gen_kwargs["network_volume_id"] = volume_id
