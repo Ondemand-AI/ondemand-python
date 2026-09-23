@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.1] - 2026-09-23
+
+### Added
+
+- `RunPodClient.provision_pod` accepts `registry_auth_id` (defaults to the
+  `RUNPOD_CONTAINER_REGISTRY_AUTH_ID` env var) so pods can pull a PRIVATE image
+  from GHCR. VERIFY the `container_registry_auth_id` field name against the SDK.
+
 ## [1.12.0] - 2026-09-23
 
 ### Added

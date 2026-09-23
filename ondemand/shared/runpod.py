@@ -155,13 +155,20 @@ class RunPodClient:
         container_disk_gb: int = 20,
         volume_gb: int = 0,
         cloud_type: str = "SECURE",
+        registry_auth_id: Optional[str] = None,
     ) -> PodHandle:
         """Create an on-demand GPU pod and return its handle (not yet ready).
 
         Prefer ``dedicated_pod`` (context manager) so teardown is guaranteed even
         on failure. VERIFY: create_pod signature against the pinned SDK.
+
+        ``registry_auth_id`` is the RunPod container-registry credential id used
+        to pull a PRIVATE image (our GHCR image is private). Defaults to the
+        RUNPOD_CONTAINER_REGISTRY_AUTH_ID env var. Register the credential once in
+        RunPod (a GitHub PAT with read:packages) and set that id.
         """
         self._ensure_key()
+        registry_auth_id = registry_auth_id or os.environ.get("RUNPOD_CONTAINER_REGISTRY_AUTH_ID")
         kwargs: Dict[str, Any] = {
             "name": name,
             "image_name": image,
@@ -171,6 +178,8 @@ class RunPodClient:
             "container_disk_in_gb": container_disk_gb,
             "env": env or {},
         }
+        if registry_auth_id:
+            kwargs["container_registry_auth_id"] = registry_auth_id  # VERIFY field name
         if volume_id:
             kwargs["network_volume_id"] = volume_id
             kwargs["volume_mount_path"] = volume_mount_path
