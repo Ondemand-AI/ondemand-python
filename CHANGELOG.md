@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.13.0] - 2026-09-23
+
+### Added
+
+Serving helpers lifted from the classification robot into the lib (so every
+classification automation reuses them, not just the demo):
+
+- `RunPodClient.serverless_health(endpoint_id)` — preflight; raises loud on a
+  missing/invalid/unreachable endpoint id instead of failing per-job.
+- `RunPodClient.serverless_run(endpoint_id, payload, timeout, heartbeat=...)` —
+  submits the job ASYNC and polls with a heartbeat, cancelling on timeout. Fixes
+  the `run_sync` bug where a cold start blocked with no heartbeat, tripped the
+  Temporal activity heartbeat timeout, and piled up orphan RunPod jobs on retry.
+- `resolve_serverless_endpoint(base_model)` — endpoint id from the
+  `RUNPOD_SERVERLESS_ENDPOINTS` JSON map (one endpoint per base, org-wide).
+- `predictions_from_choices(choices, name_to_code)` — batch counterpart of
+  `prediction_from_choice` (the worker returns `{"choices": [...]}` for a batched
+  request).
+- `precision_coverage_curve(scored)` and `threshold_for_target_precision(scored,
+  target)` — empirical calibration (no sklearn): the auto-post precision/coverage
+  operating-point view the spike derived, so a run can report the margin cutoff
+  each precision target needs (and its coverage cost).
+
+
 ## [1.12.8] - 2026-09-23
 
 ### Added

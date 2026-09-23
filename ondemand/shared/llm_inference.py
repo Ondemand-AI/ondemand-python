@@ -93,6 +93,52 @@ def prediction_from_choice(
     return Prediction(raw=text, code=code, confidence=conf)
 
 
+def predictions_from_choices(choices, name_to_code=None):
+    """Batch counterpart of ``prediction_from_choice``: one Prediction per choice
+    (the RunPod worker returns ``{"choices": [...]}`` for a batched request)."""
+    return [prediction_from_choice(c, name_to_code) for c in (choices or [])]
+
+
+def precision_coverage_curve(scored, cutoffs=None):
+    """Auto-post precision vs coverage across margin cutoffs.
+
+    ``scored``: iterable of ``(margin_first, correct_bool)``. For each cutoff,
+    precision = fraction correct among rows with margin >= cutoff, coverage =
+    fraction of rows at/above it. Empirical (no sklearn) — the operating-point
+    view the spike derived via calibration. margin None counts as 0.
+    """
+    pts = [(float(m) if m is not None else 0.0, bool(c)) for m, c in scored]
+    n = len(pts) or 1
+    cutoffs = cutoffs if cutoffs is not None else [0.90, 0.95, 0.97, 0.98, 0.99, 0.995, 0.999]
+    out = []
+    for cut in cutoffs:
+        auto = [c for m, c in pts if m >= cut]
+        out.append({
+            "cutoff": cut,
+            "auto": len(auto),
+            "coverage": len(auto) / n,
+            "precision": (sum(auto) / len(auto)) if auto else 0.0,
+        })
+    return out
+
+
+def threshold_for_target_precision(scored, target, grid_step=0.001):
+    """Smallest margin cutoff whose empirical auto-post precision >= ``target``.
+
+    Returns ``(cutoff, coverage, precision)`` or ``None`` when unreachable (the
+    model's confidence ceiling is below the target — no cutoff delivers it).
+    """
+    pts = [(float(m) if m is not None else 0.0, bool(c)) for m, c in scored]
+    n = len(pts) or 1
+    cut = 0.0
+    while cut <= 1.0:
+        auto = [c for m, c in pts if m >= cut]
+        if auto and (sum(auto) / len(auto)) >= target:
+            return (round(cut, 4), len(auto) / n, sum(auto) / len(auto))
+        cut += grid_step
+    return None
+
+
 def margins_from_logprobs(logprobs: Optional[Dict[str, Any]]) -> Dict[str, Optional[float]]:
     """Compute confidence signals from a vLLM ``choices[0].logprobs`` object.
 

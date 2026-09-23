@@ -517,6 +517,86 @@ class RunPodClient:
         job = endpoint.run(payload)
         return {"id": job.job_id, "status": job.status()}
 
+    def serverless_health(self, endpoint_id: str, timeout: float = 15.0) -> Dict[str, Any]:
+        """Preflight an endpoint; raise LOUD if the id is missing/invalid/unreachable.
+
+        Fails fast (one clear error) instead of letting every job silently error.
+        RunPod endpoints are account-scoped, so the account key authorizes any.
+        """
+        import httpx
+        if not endpoint_id:
+            raise RunPodKeyMissingError("serverless endpoint id is empty")
+        url = f"https://api.runpod.ai/v2/{endpoint_id}/health"
+        try:
+            r = httpx.get(url, headers=self._rest_headers(), timeout=timeout)
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"serverless endpoint '{endpoint_id}' unreachable: {e}") from e
+        if r.status_code != 200:
+            raise RuntimeError(
+                f"serverless endpoint '{endpoint_id}' invalid/forbidden "
+                f"(HTTP {r.status_code}: {(r.text or '')[:200]})"
+            )
+        return r.json()
+
+    def serverless_run(
+        self,
+        endpoint_id: str,
+        payload: Dict[str, Any],
+        timeout: float = 600.0,
+        poll_interval: float = 1.0,
+        heartbeat=None,
+    ) -> Any:
+        """Submit a job ASYNC and poll to completion, pinging ``heartbeat`` each poll.
+
+        ``run_sync`` blocks with no heartbeat, so a cold start (worker boot + model
+        load) exceeds a Temporal activity heartbeat timeout, the activity is retried
+        mid-flight, and orphan RunPod jobs pile up. This polls with a heartbeat and
+        cancels the job on timeout. Returns the job output; raises on failure/timeout
+        (the caller decides whether one failure should sink a whole batch).
+        """
+        self._ensure_key()
+        endpoint = _runpod_sdk.Endpoint(endpoint_id)
+        job = endpoint.run(payload)
+        deadline = time.time() + timeout
+        terminal = ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT")
+        st = None
+        while True:
+            st = job.status()
+            if st in terminal:
+                break
+            if time.time() > deadline:
+                try:
+                    job.cancel()
+                except Exception:  # noqa: BLE001
+                    pass
+                raise TimeoutError(f"serverless job timed out after {timeout}s (status {st})")
+            if heartbeat:
+                try:
+                    heartbeat(f"serverless {st}")
+                except Exception:  # noqa: BLE001
+                    pass
+            time.sleep(poll_interval)
+        if st != "COMPLETED":
+            raise RuntimeError(f"serverless job ended {st}")
+        return job.output()
+
+
+def resolve_serverless_endpoint(base_model: str) -> str:
+    """Endpoint id for a base model, from the ``RUNPOD_SERVERLESS_ENDPOINTS`` env
+    (JSON map ``{"<base_model>": "<endpoint_id>"}``, from the org-wide
+    ondemand-shared secret). One endpoint per base, shared across automations.
+    Returns "" when unset or the base is not mapped.
+    """
+    import json
+    raw = (os.environ.get("RUNPOD_SERVERLESS_ENDPOINTS") or "").strip()
+    if not raw:
+        return ""
+    try:
+        m = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return ""
+    return str((m.get(base_model) if isinstance(m, dict) else "") or "")
+
 
 # Global instance
 _runpod_client: Optional[RunPodClient] = None
