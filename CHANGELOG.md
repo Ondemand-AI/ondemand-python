@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.12.7] - 2026-09-23
+
+### Added
+
+GPU pod logs survive the pod's death, as a Run artifact. The training activity
+now passes `GPU_LOG_R2_PREFIX = artifacts/{workflow_id}/gpu-logs/` to the pod;
+the GPU image (ondemand-gpu) tees its full stdout/stderr to R2 under
+`{prefix}{RUNPOD_POD_ID}.log`. The pod id is the GPU's identifier, so a retry (a
+new pod) writes its own file instead of overwriting the last attempt. The exact
+key is logged and shown in the `provision` step summary (`gpu_log_prefix()`
+helper on `ondemand.worker.training.activities`). Once a RunPod pod is torn down
+its own logs are gone, so this is the only durable record of what the GPU did.
+
 ## [1.12.6] - 2026-09-23
 
 ### Fixed

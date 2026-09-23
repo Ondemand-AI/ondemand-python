@@ -50,9 +50,21 @@ def _pod_env(input: TrainingInput) -> Dict[str, str]:
             "BASE_MODEL": input.base_model,
             "OUTPUT_PREFIX": input.output_prefix,
             "HYPERPARAMS_JSON": json.dumps(input.hyperparams),
+            # Ship the pod's own logs to R2 so they survive its death (the pod
+            # appends {RUNPOD_POD_ID}.log). See ``gpu_log_key`` for the full path.
+            "GPU_LOG_R2_PREFIX": gpu_log_prefix(input.workflow_id),
         }
     )
     return env
+
+
+def gpu_log_prefix(workflow_id: str) -> str:
+    """R2 prefix under which a GPU pod ships its log, as a Run artifact.
+
+    The pod appends ``{RUNPOD_POD_ID}.log`` — the pod id is the GPU's identifier,
+    so a retry (new pod) writes its own file instead of overwriting the last one.
+    """
+    return f"artifacts/{workflow_id}/gpu-logs/"
 
 
 @activity.defn
@@ -98,10 +110,12 @@ def run_training_job(input: TrainingInput) -> TrainingResult:
         heartbeat=activity.heartbeat,
         gpu_type=input.gpu_type,
     ) as pod:
+        gpu_log_key = f"{gpu_log_prefix(input.workflow_id)}{pod.id}.log"
         report.step_completed("provision", "Provisionar GPU no RunPod",
-                              summary=f"pod {pod.id}")
+                              summary=f"pod {pod.id} | logs: {gpu_log_key}")
         report.step_started("train", "Treino LoRA (Unsloth)")
-        logger.info("Pod %s treinando; aguardando marcador em %s", pod.id, success_marker)
+        logger.info("Pod %s treinando; logs em r2://%s; aguardando marcador em %s",
+                    pod.id, gpu_log_key, success_marker)
 
         # Poll R2 for the terminal marker. start_to_close_timeout on the activity
         # bounds the total wait; heartbeat keeps Temporal/KEDA aware we are alive.
