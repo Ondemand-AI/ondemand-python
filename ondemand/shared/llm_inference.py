@@ -78,6 +78,21 @@ def map_name_to_code(text: str, name_to_code: Dict[str, str]) -> Optional[str]:
     return None
 
 
+def prediction_from_choice(
+    choice: Dict[str, Any], name_to_code: Optional[Dict[str, str]] = None
+) -> "Prediction":
+    """Build a Prediction from a vLLM/OpenAI ``choices[0]`` object.
+
+    Shared by the dedicated HTTP path (``LLMInferenceClient.classify``) and the
+    serverless path (the RunPod worker returns this same choice shape), so the
+    margin/confidence math is identical wherever the model is served.
+    """
+    text = (choice.get("text") or "").strip()
+    conf = margins_from_logprobs(choice.get("logprobs"))
+    code = map_name_to_code(text, name_to_code) if name_to_code else None
+    return Prediction(raw=text, code=code, confidence=conf)
+
+
 def margins_from_logprobs(logprobs: Optional[Dict[str, Any]]) -> Dict[str, Optional[float]]:
     """Compute confidence signals from a vLLM ``choices[0].logprobs`` object.
 
@@ -230,10 +245,7 @@ class LLMInferenceClient:
                     r = client.post(url, json=body, headers=self._headers())
                     r.raise_for_status()
                     choice = r.json()["choices"][0]
-                text = (choice.get("text") or "").strip()
-                conf = margins_from_logprobs(choice.get("logprobs"))
-                code = map_name_to_code(text, name_to_code) if name_to_code else None
-                return Prediction(raw=text, code=code, confidence=conf)
+                return prediction_from_choice(choice, name_to_code)
             except Exception as e:  # noqa: BLE001 - report, retry, then surface
                 last_err = str(e)
                 if attempt < retries - 1:

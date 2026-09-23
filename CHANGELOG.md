@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.12.8] - 2026-09-23
+
+### Added
+
+`prediction_from_choice(choice, name_to_code)` in `ondemand.shared.llm_inference`:
+builds a `Prediction` (raw text, mapped code, margin confidence) from a
+vLLM/OpenAI `choices[0]` object. Shared by the dedicated HTTP path
+(`LLMInferenceClient.classify` now delegates to it) and the RunPod **serverless**
+path (the worker returns the same choice shape), so the confidence math is
+identical wherever the model is served. Groundwork for moving classification
+serving to RunPod Serverless (kills the cold image pull that hurt dedicated pods).
+
 ## [1.12.7] - 2026-09-23
 
 ### Added
