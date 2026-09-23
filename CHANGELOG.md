@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.12.6] - 2026-09-23
+
+### Fixed
+
+`RunPodClient.wait_pod_ready` and `LLMInferenceClient.wait_ready` accept a
+`heartbeat` callback and ping it each poll. A serving cold start (vLLM image pull
++ loading a 7B fp16 base) exceeds a Temporal activity heartbeat timeout, and
+these two long waits were previously silent — the classification activity died
+with `TIMEOUT_TYPE_HEARTBEAT`. Callers pass `activity.heartbeat`.
+
 ## [1.12.5] - 2026-09-23
 
 ### Added

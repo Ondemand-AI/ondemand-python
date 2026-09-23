@@ -171,15 +171,22 @@ class LLMInferenceClient:
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
 
-    def wait_ready(self, timeout: float = 300.0, interval: float = 3.0) -> bool:
+    def wait_ready(self, timeout: float = 300.0, interval: float = 3.0, heartbeat=None) -> bool:
         """Poll ``/v1/models`` until the server answers 200 or the timeout elapses.
 
         vLLM serves ``/v1/models`` only once the model is loaded, so this is the
-        honest readiness probe for a pod that just booted.
+        honest readiness probe for a pod that just booted. Pass ``heartbeat`` (e.g.
+        ``activity.heartbeat``) — loading a 7B base can exceed a Temporal activity
+        heartbeat timeout, so we ping each poll.
         """
         deadline = time.time() + timeout
         url = f"{self.base_url}/v1/models"
         while time.time() < deadline:
+            if heartbeat:
+                try:
+                    heartbeat("waiting for vLLM /v1/models")
+                except Exception:
+                    pass
             try:
                 with httpx.Client(timeout=10.0) as client:
                     r = client.get(url, headers=self._headers())

@@ -254,15 +254,23 @@ class RunPodClient:
         internal_port: int = 8000,
         timeout: float = 900.0,
         interval: float = 5.0,
+        heartbeat=None,
     ) -> PodHandle:
         """Poll until the pod exposes a public port, then set ``endpoint_url``.
 
         Does not probe the app; use ``LLMInferenceClient.wait_ready`` for that.
+        Pass ``heartbeat`` (e.g. ``activity.heartbeat``) — a pod boot / image pull
+        can exceed a Temporal activity heartbeat timeout, so we ping each poll.
         VERIFY: get_pod runtime/ports shape against the pinned SDK.
         """
         self._ensure_key()
         deadline = time.time() + timeout
         while time.time() < deadline:
+            if heartbeat:
+                try:
+                    heartbeat("waiting for pod to expose port")
+                except Exception:
+                    pass
             pod = _runpod_sdk.get_pod(handle.id)
             runtime = (pod or {}).get("runtime") if isinstance(pod, dict) else None
             ports = (runtime or {}).get("ports") or []
