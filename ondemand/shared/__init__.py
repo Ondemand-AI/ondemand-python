@@ -36,6 +36,7 @@ from ondemand.shared.runpod import (
     RunPodClient,
     PodHandle,
     RunPodKeyMissingError,
+    GpuCapacityUnavailable,
     get_runpod_client,
     get_runpod_api_key,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "RunPodClient",
     "PodHandle",
     "RunPodKeyMissingError",
+    "GpuCapacityUnavailable",
     "get_runpod_client",
     "get_runpod_api_key",
     # LLM inference + confidence

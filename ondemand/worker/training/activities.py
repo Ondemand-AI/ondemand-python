@@ -73,7 +73,10 @@ def run_training_job(input: TrainingInput) -> TrainingResult:
     failed_marker = f"{input.output_prefix}/_FAILED"
 
     report.step_started("provision", "Provisionar GPU no RunPod")
-    logger.info("Provisionando GPU %s (imagem %s)", input.gpu_type, input.training_image)
+    logger.info(
+        "Provisionando GPU (min %sGB, clouds %s, imagem %s)",
+        input.min_vram_gb, input.cloud_types, input.training_image,
+    )
 
     volume_id = None
     if input.volume_name:
@@ -81,16 +84,20 @@ def run_training_job(input: TrainingInput) -> TrainingResult:
             input.volume_name, size_gb=60, region=input.region
         )
 
-    pod_kwargs = dict(
-        gpu_type=input.gpu_type,
+    # Cheapest available GPU meeting min_vram across the clouds, waiting out a
+    # total shortage with backoff. gpu_type (if set) pins one instead. The context
+    # manager guarantees teardown even if the body raises/cancels.
+    with runpod.dedicated_pod(
         image=input.training_image,
         name=f"train-{input.workflow_id}",
+        min_vram_gb=input.min_vram_gb,
+        cloud_types=input.cloud_types,
         env=_pod_env(input),
         volume_id=volume_id,
-    )
-
-    # The context manager guarantees teardown even if the body raises/cancels.
-    with runpod.dedicated_pod(**pod_kwargs) as pod:
+        max_wait_seconds=input.max_provision_wait_seconds,
+        heartbeat=activity.heartbeat,
+        gpu_type=input.gpu_type,
+    ) as pod:
         report.step_completed("provision", "Provisionar GPU no RunPod",
                               summary=f"pod {pod.id}")
         report.step_started("train", "Treino LoRA (Unsloth)")
@@ -107,6 +114,20 @@ def run_training_job(input: TrainingInput) -> TrainingResult:
                 report.step_failed("train", "Treino LoRA (Unsloth)",
                                    error="training pod wrote _FAILED")
                 raise RuntimeError(f"Training failed: {failed_marker} present in R2")
+            # Liveness: a pod that died (e.g. a Community-cloud eviction) without a
+            # marker would otherwise hang until the activity timeout. Detect it and
+            # fail fast so Temporal re-provisions. Re-check the success marker first
+            # to close the race where the pod exits right after writing _SUCCESS.
+            if not runpod.pod_alive(pod):
+                if r2.object_exists(success_marker):
+                    logger.info("Treino concluído (pod saiu; _SUCCESS presente)")
+                    break
+                report.step_failed("train", "Treino LoRA (Unsloth)",
+                                   error="pod died without a completion marker")
+                raise RuntimeError(
+                    f"Training pod {pod.id} died without _SUCCESS/_FAILED "
+                    "(likely a Community-cloud eviction) — will retry"
+                )
             time.sleep(_POLL_INTERVAL_SECONDS)
 
         report.step_completed("train", "Treino LoRA (Unsloth)")

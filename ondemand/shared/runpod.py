@@ -52,6 +52,25 @@ class RunPodKeyMissingError(RuntimeError):
     """Raised when a GPU operation is attempted with no RUNPOD_API_KEY set."""
 
 
+class GpuCapacityUnavailable(RuntimeError):
+    """Raised when no GPU matching the spec could be provisioned right now.
+
+    Distinct from other errors so the caller can wait and retry (capacity is
+    transient) rather than fail hard.
+    """
+
+
+def _is_no_capacity(err: Exception) -> bool:
+    """True if a provision error is RunPod signalling no available instances."""
+    msg = str(err).lower()
+    return (
+        "no longer any instances" in msg
+        or "no instances" in msg
+        or "not enough" in msg
+        or "instances available" in msg
+    )
+
+
 def get_runpod_api_key() -> str:
     """Return the RunPod API key from the ``RUNPOD_API_KEY`` env var.
 
@@ -268,19 +287,204 @@ class RunPodClient:
         except Exception as e:  # noqa: BLE001 - teardown must never raise past here
             logger.error("Failed to terminate pod %s: %s — CHECK RUNPOD CONSOLE", handle.id, e)
 
+    def pod_alive(self, handle: PodHandle) -> bool:
+        """Best-effort liveness: False if the pod has exited/terminated/failed.
+
+        On a query error we assume alive — a transient API blip must not kill a
+        running job. A pod that exits normally at end of training also reads as
+        not-alive, so callers must check the success marker BEFORE trusting this.
+        """
+        try:
+            self._ensure_key()
+            pod = _runpod_sdk.get_pod(handle.id)
+        except Exception:
+            return True
+        if not isinstance(pod, dict) or not pod:
+            return False
+        return pod.get("desiredStatus") not in ("EXITED", "TERMINATED", "FAILED")
+
+    # ------------------------------------------------------------- selection
+    _CLOUD_PRICE_FIELD = {"SECURE": "securePrice", "COMMUNITY": "communityPrice"}
+    _CLOUD_AVAIL_FIELD = {"SECURE": "secureCloud", "COMMUNITY": "communityCloud"}
+
+    def list_gpu_candidates(
+        self,
+        min_vram_gb: int,
+        cloud_types=("SECURE", "COMMUNITY"),
+    ) -> list:
+        """RunPod GPU types with >= min_vram, cheapest on-demand price first.
+
+        Returns [{gpu_type_id, cloud_type, price, name, vram}] sorted by price.
+        Actual stock is only known at deploy time, so this ranks by price and the
+        caller falls back to the next candidate on a no-capacity error.
+        """
+        self._ensure_key()
+        from runpod.api import graphql as _runpod_graphql
+
+        query = """
+        query {
+          gpuTypes {
+            id
+            displayName
+            memoryInGb
+            secureCloud
+            communityCloud
+            securePrice
+            communityPrice
+          }
+        }
+        """
+        raw = _runpod_graphql.run_graphql_query(query)
+        if isinstance(raw, dict) and raw.get("errors"):
+            raise RuntimeError(f"RunPod gpuTypes query failed: {raw['errors']}")
+
+        candidates = []
+        for g in (raw["data"]["gpuTypes"] or []):
+            vram = g.get("memoryInGb") or 0
+            if vram < min_vram_gb:
+                continue
+            for cloud in cloud_types:
+                if not g.get(self._CLOUD_AVAIL_FIELD[cloud]):
+                    continue
+                price = g.get(self._CLOUD_PRICE_FIELD[cloud])
+                if price is None or price <= 0:
+                    continue
+                candidates.append({
+                    "gpu_type_id": g["id"],
+                    "cloud_type": cloud,
+                    "price": price,
+                    "name": g.get("displayName"),
+                    "vram": vram,
+                })
+        candidates.sort(key=lambda c: c["price"])
+        return candidates
+
+    def provision_cheapest(
+        self,
+        image: str,
+        name: str,
+        min_vram_gb: int,
+        cloud_types=("SECURE", "COMMUNITY"),
+        env: Optional[Dict[str, str]] = None,
+        volume_id: Optional[str] = None,
+        container_disk_gb: int = 20,
+        ports: str = "8000/http",
+        volume_mount_path: str = "/runpod-volume",
+    ) -> PodHandle:
+        """Provision the cheapest available GPU meeting min_vram, falling back on
+        capacity. Raises GpuCapacityUnavailable if every candidate is out now."""
+        candidates = self.list_gpu_candidates(min_vram_gb, cloud_types)
+        if not candidates:
+            raise GpuCapacityUnavailable(
+                f"No GPU type offered with >= {min_vram_gb}GB in {list(cloud_types)}"
+            )
+        last_err = None
+        for c in candidates:
+            try:
+                logger.info(
+                    "Trying %s (%s, %sGB, $%.3f/hr)",
+                    c["name"], c["cloud_type"], c["vram"], c["price"],
+                )
+                return self.provision_pod(
+                    gpu_type=c["gpu_type_id"], image=image, name=name,
+                    cloud_type=c["cloud_type"], env=env, volume_id=volume_id,
+                    container_disk_gb=container_disk_gb, ports=ports,
+                    volume_mount_path=volume_mount_path,
+                )
+            except Exception as e:  # noqa: BLE001
+                if _is_no_capacity(e):
+                    last_err = e
+                    continue
+                raise
+        raise GpuCapacityUnavailable(
+            f"All {len(candidates)} candidate GPUs out of stock (last: {last_err})"
+        )
+
+    def provision_with_wait(
+        self,
+        image: str,
+        name: str,
+        min_vram_gb: int,
+        cloud_types=("SECURE", "COMMUNITY"),
+        env: Optional[Dict[str, str]] = None,
+        volume_id: Optional[str] = None,
+        container_disk_gb: int = 20,
+        ports: str = "8000/http",
+        volume_mount_path: str = "/runpod-volume",
+        max_wait_seconds: int = 1800,
+        first_interval: int = 30,
+        max_interval: int = 60,
+        heartbeat=None,
+    ) -> PodHandle:
+        """``provision_cheapest`` but wait out a total shortage with backoff.
+
+        Interval ramps first_interval (30s) -> capped at max_interval (60s), for
+        up to max_wait_seconds (30min). An opening is picked up on the next poll,
+        so within <= max_interval. ``heartbeat`` is called on each wait so a
+        Temporal activity does not hit its heartbeat timeout.
+        """
+        deadline = time.time() + max_wait_seconds
+        interval = first_interval
+        while True:
+            try:
+                return self.provision_cheapest(
+                    image=image, name=name, min_vram_gb=min_vram_gb,
+                    cloud_types=cloud_types, env=env, volume_id=volume_id,
+                    container_disk_gb=container_disk_gb, ports=ports,
+                    volume_mount_path=volume_mount_path,
+                )
+            except GpuCapacityUnavailable as e:
+                if time.time() >= deadline:
+                    raise
+                logger.warning("No GPU available; retrying in %ss (%s)", interval, e)
+                if heartbeat:
+                    try:
+                        heartbeat("waiting for GPU capacity")
+                    except Exception:
+                        pass
+                time.sleep(interval)
+                interval = min(interval * 2, max_interval)
+
     @contextlib.contextmanager
-    def dedicated_pod(self, **kwargs):
-        """Context manager: provision a dedicated pod and always tear it down.
+    def dedicated_pod(
+        self,
+        image: str,
+        name: str,
+        min_vram_gb: int = 16,
+        cloud_types=("SECURE", "COMMUNITY"),
+        env: Optional[Dict[str, str]] = None,
+        volume_id: Optional[str] = None,
+        container_disk_gb: int = 20,
+        ports: str = "8000/http",
+        volume_mount_path: str = "/runpod-volume",
+        max_wait_seconds: int = 1800,
+        heartbeat=None,
+        gpu_type: Optional[str] = None,
+    ):
+        """Provision the cheapest available GPU (waiting out shortages) and ALWAYS
+        tear it down — the teardown guarantee, even if the body raises/times out.
 
-        This is the teardown guarantee. The pod is terminated on the way out even
-        if the body raises or times out.
+        Pass ``gpu_type`` to pin one specific GPU instead of the selector.
 
-            with client.dedicated_pod(gpu_type=..., image=..., name=...) as pod:
-                client.wait_pod_ready(pod)
-                ... use pod.endpoint_url ...
+            with client.dedicated_pod(image=..., name=..., min_vram_gb=16) as pod:
+                ... use pod ...
             # pod terminated here, no matter what
         """
-        handle = self.provision_pod(**kwargs)
+        if gpu_type:
+            handle = self.provision_pod(
+                gpu_type=gpu_type, image=image, name=name,
+                cloud_type=(cloud_types[0] if cloud_types else "SECURE"),
+                env=env, volume_id=volume_id, container_disk_gb=container_disk_gb,
+                ports=ports, volume_mount_path=volume_mount_path,
+            )
+        else:
+            handle = self.provision_with_wait(
+                image=image, name=name, min_vram_gb=min_vram_gb,
+                cloud_types=cloud_types, env=env, volume_id=volume_id,
+                container_disk_gb=container_disk_gb, ports=ports,
+                volume_mount_path=volume_mount_path,
+                max_wait_seconds=max_wait_seconds, heartbeat=heartbeat,
+            )
         try:
             yield handle
         finally:

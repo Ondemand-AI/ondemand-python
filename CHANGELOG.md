@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.12.5] - 2026-09-23
+
+### Added
+
+GPU capacity resilience in `RunPodClient` (GPU clouds run out of stock — this is
+the #1 production failure mode):
+
+- **Cheapest-available selector** — `list_gpu_candidates(min_vram_gb, cloud_types)`
+  queries RunPod `gpuTypes` (price + VRAM + per-cloud availability), filters to
+  cards meeting the VRAM floor, and ranks by on-demand price. `provision_cheapest`
+  tries them cheapest-first, falling back on a no-capacity error.
+- **Wait-out backoff** — `provision_with_wait` retries the whole ladder with
+  backoff (30s → capped 60s) up to `max_wait_seconds` (default 30min) when every
+  candidate is out; an opening is picked up on the next poll. `GpuCapacityUnavailable`
+  is raised only after the deadline.
+- **Pod liveness** — `pod_alive` lets a caller detect a pod that died without a
+  completion marker (e.g. a Community-cloud eviction) and fail fast for a retry
+  instead of hanging until timeout.
+- `dedicated_pod` now takes `min_vram_gb` / `cloud_types` / `max_wait_seconds` /
+  `heartbeat` and selects the cheapest GPU by default; pass `gpu_type` to pin one.
+
+`TrainingInput` gains `min_vram_gb` (default 16 — a 7B-4bit LoRA fits), `cloud_types`
+(default SECURE+COMMUNITY) and `max_provision_wait_seconds`; `gpu_type` is now an
+optional pin. The training activity uses the selector and checks pod liveness while
+polling for the adapter.
+
 ## [1.12.4] - 2026-09-23
 
 ### Fixed

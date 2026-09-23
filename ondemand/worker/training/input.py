@@ -45,9 +45,25 @@ class TrainingInput(WorkflowInput):
         return self.inputs.get("base_model", DEFAULT_BASE_MODEL)
 
     @property
-    def gpu_type(self) -> str:
-        """RunPod GPU type id. VERIFY the exact id string against the account."""
-        return self.inputs.get("gpu_type", "NVIDIA GeForce RTX 4090")
+    def gpu_type(self) -> Optional[str]:
+        """Optional: pin one RunPod GPU type id. If unset, the client selects the
+        cheapest available GPU meeting min_vram_gb across cloud_types."""
+        return self.inputs.get("gpu_type")
+
+    @property
+    def min_vram_gb(self) -> int:
+        """Minimum GPU VRAM. 16GB comfortably fits a 7B-4bit LoRA (Unsloth)."""
+        return int(self.inputs.get("min_vram_gb", 16))
+
+    @property
+    def cloud_types(self) -> list:
+        """RunPod clouds to consider, cheapest-first across all of them."""
+        return self.inputs.get("cloud_types", ["SECURE", "COMMUNITY"])
+
+    @property
+    def max_provision_wait_seconds(self) -> int:
+        """How long to keep retrying for a GPU when all specs are out (backoff)."""
+        return int(self.inputs.get("max_provision_wait_seconds", 1800))
 
     @property
     def training_image(self) -> str:
