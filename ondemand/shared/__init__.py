@@ -32,6 +32,22 @@ from ondemand.shared.r2_storage import (
     get_r2_client,
     R2StorageClient,
 )
+from ondemand.shared.runpod import (
+    RunPodClient,
+    PodHandle,
+    RunPodKeyMissingError,
+    get_runpod_client,
+    get_runpod_api_key,
+)
+from ondemand.shared.llm_inference import (
+    LLMInferenceClient,
+    Prediction,
+    MarginCalibrator,
+    build_alpaca_prompt,
+    map_name_to_code,
+    margins_from_logprobs,
+    normalize_text,
+)
 
 __all__ = [
     "get_output_dir",
@@ -61,6 +77,20 @@ __all__ = [
     "download_input_files",
     "get_r2_client",
     "R2StorageClient",
+    # RunPod GPU provisioning
+    "RunPodClient",
+    "PodHandle",
+    "RunPodKeyMissingError",
+    "get_runpod_client",
+    "get_runpod_api_key",
+    # LLM inference + confidence
+    "LLMInferenceClient",
+    "Prediction",
+    "MarginCalibrator",
+    "build_alpaca_prompt",
+    "map_name_to_code",
+    "margins_from_logprobs",
+    "normalize_text",
     # Backward compatibility
     "save_state",
     "load_state",

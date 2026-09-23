@@ -255,6 +255,34 @@ class R2StorageClient:
 
         return result
 
+    def object_exists(self, key: str) -> bool:
+        """Return True if an object exists at ``key`` (used to poll for markers)."""
+        client = self._get_client()
+        try:
+            client.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise
+
+    def put_bytes(
+        self,
+        key: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> Dict[str, Any]:
+        """Put raw bytes at an explicit ``key`` (no artifacts/ prefixing, no notify).
+
+        Unlike ``upload_content``, this writes exactly where told — for keys
+        outside the run's artifacts tree, such as ``adapters/.../latest.json``.
+        """
+        client = self._get_client()
+        client.put_object(Bucket=self.bucket, Key=key, Body=content, ContentType=content_type)
+        logger.debug("Put r2://%s/%s (%d bytes)", self.bucket, key, len(content))
+        return {"key": key, "size": len(content)}
+
     def copy_object(
         self,
         source_key: str,

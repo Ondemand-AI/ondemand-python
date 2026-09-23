@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.12.0] - 2026-09-23
+
+### Added
+
+GPU fine-tuning + inference support, the first shared workflow in the library.
+
+- `ondemand.shared.runpod.RunPodClient` — provisions RunPod GPUs in two lanes,
+  dedicated (with a guaranteed-teardown context manager, `dedicated_pod`) and
+  serverless, plus `ensure_volume` for the network-volume cache. The API key is
+  read from the `RUNPOD_API_KEY` env var, injected as a per-automation Kubernetes
+  secret (like R2 and the Bitwarden bootstrap creds). Calling a GPU function with
+  no key raises a loud `RunPodKeyMissingError` explaining exactly how to fix it.
+  Behind the new optional `[runpod]` extra so CPU robots never pull the SDK. The
+  exact SDK calls are flagged VERIFY — confirm against the pinned `runpod`
+  version before the first real run.
+- `ondemand.shared.llm_inference.LLMInferenceClient` — OpenAI-compatible vLLM
+  client with first-token **margin** confidence (the spike's strongest signal,
+  AUC 0.88) and an optional `MarginCalibrator` (needs the `[calibration]` extra).
+- `ondemand.worker.training.TrainingWorkflow` — generic LoRA fine-tune. Takes a
+  job spec (`dataset_key`, `base_model`, `gpu_type`, hyperparameters), provisions
+  a GPU, waits on an R2 `_SUCCESS` marker (authoritative, unlike pod progress %),
+  publishes the adapter + a `latest.json` manifest, and always tears the GPU down.
+- `R2StorageClient.object_exists` and `put_bytes` for marker polling and writing
+  adapter manifests outside the artifacts tree.
+
 ## [1.11.0] - 2026-08-29
 
 ### Changed

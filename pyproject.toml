@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ondemand-ai"
-version = "1.11.0"
+version = "1.12.0"
 description = "Automation agent toolkit for the Ondemand platform"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,6 +35,16 @@ dependencies = [
 worker = [
     "temporalio>=1.7.0",
     "ondemand-obs[temporal]>=0.1.8",
+]
+# GPU provisioning on RunPod (training + inference orchestration). Kept optional
+# so CPU robots never pull the SDK. VERIFY the pin against the tested SDK version.
+runpod = [
+    "runpod>=1.6.0",
+]
+# Confidence calibration (isotonic/Platt). Only needed to fit MarginCalibrator.
+calibration = [
+    "scikit-learn>=1.3.0",
+    "numpy>=1.24.0",
 ]
 
 [project.urls]

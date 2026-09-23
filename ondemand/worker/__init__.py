@@ -31,5 +31,27 @@ from .logging import setup_logging, get_collected_logs, get_and_clear_logs
 from .activity_reporter import report, ActivityReporter
 
 from ondemand.worker.input import WorkflowInput
+from ondemand.worker.training import (
+    TrainingWorkflow,
+    TrainingInput,
+    TrainingResult,
+    run_training_job,
+    training_activities,
+)
 
-__all__ = ["OndemandWorker", "WorkflowInput", "WorkflowReporter", "setup_logging", "get_collected_logs", "get_and_clear_logs", "report", "ActivityReporter"]
+__all__ = [
+    "OndemandWorker",
+    "WorkflowInput",
+    "WorkflowReporter",
+    "setup_logging",
+    "get_collected_logs",
+    "get_and_clear_logs",
+    "report",
+    "ActivityReporter",
+    # Generic training workflow (shared)
+    "TrainingWorkflow",
+    "TrainingInput",
+    "TrainingResult",
+    "run_training_job",
+    "training_activities",
+]
