@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.12.2] - 2026-09-23
+
+### Changed
+
+`TrainingInput.hyperparams` now exposes the full LoRA/SFT surface (the same dials
+Valkyrie surfaces, same Unsloth method): LoRA (r, alpha, dropout, target_modules,
+rslora), schedule (epochs, max_steps, lr, scheduler, warmup ratio/steps, weight
+decay), batch (size, grad accumulation), and optim/seq_len/seed/logging/packing/
+gradient_checkpointing. Every knob has the spike's default and is overridable via
+`inputs["hyperparams"]`. The whole set travels to the training pod as a single
+`HYPERPARAMS_JSON` env blob, so adding a knob never touches the passthrough. The
+training image (`ondemand-gpu`) reads and applies all of them.
+
 ## [1.12.1] - 2026-09-23
 
 ### Added

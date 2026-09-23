@@ -6,8 +6,8 @@ Contract with the training image (build the image to match this):
   ENTRYPOINT must:
     1. Read R2_ENDPOINT / R2_ACCESS_KEY / R2_SECRET_KEY / R2_BUCKET.
     2. Download the dataset at DATASET_KEY from R2.
-    3. Fine-tune ``BASE_MODEL`` with Unsloth/LoRA using LORA_R / LORA_ALPHA /
-       EPOCHS / LEARNING_RATE / SEQ_LEN.
+    3. Fine-tune ``BASE_MODEL`` with Unsloth/LoRA using the full hyperparameter
+       set in HYPERPARAMS_JSON (a JSON object; every knob has a default).
     4. Upload the adapter files under OUTPUT_PREFIX/ in R2.
     5. Write an empty object at OUTPUT_PREFIX/_SUCCESS as the LAST step (or
        OUTPUT_PREFIX/_FAILED on error), then exit.
@@ -38,19 +38,18 @@ _R2_ENV_KEYS = ("R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_BUCKET")
 
 
 def _pod_env(input: TrainingInput) -> Dict[str, str]:
-    """Build the env dict handed to the training pod."""
-    hp = input.hyperparams
+    """Build the env dict handed to the training pod.
+
+    All hyperparameters travel as a single ``HYPERPARAMS_JSON`` blob so adding a
+    knob never means touching this passthrough — the image reads the whole set.
+    """
     env = {k: os.environ[k] for k in _R2_ENV_KEYS if os.environ.get(k)}
     env.update(
         {
             "DATASET_KEY": input.dataset_key,
             "BASE_MODEL": input.base_model,
             "OUTPUT_PREFIX": input.output_prefix,
-            "LORA_R": str(hp["lora_r"]),
-            "LORA_ALPHA": str(hp["lora_alpha"]),
-            "EPOCHS": str(hp["epochs"]),
-            "LEARNING_RATE": str(hp["learning_rate"]),
-            "SEQ_LEN": str(hp["seq_len"]),
+            "HYPERPARAMS_JSON": json.dumps(input.hyperparams),
         }
     )
     return env

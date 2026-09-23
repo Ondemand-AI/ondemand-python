@@ -78,13 +78,41 @@ class TrainingInput(WorkflowInput):
 
     @property
     def hyperparams(self) -> Dict[str, Any]:
-        """LoRA/training hyperparameters, with the spike's defaults."""
+        """Full LoRA/SFT hyperparameter set, with the spike's defaults.
+
+        Every knob is overridable via ``inputs["hyperparams"]``; anything omitted
+        keeps the default (the spike's proven values). This mirrors the surface
+        Valkyrie exposes — same Unsloth LoRA method, all the dials. The whole dict
+        is handed to the training pod as ``HYPERPARAMS_JSON``.
+        """
         hp = {
+            # LoRA
             "lora_r": 32,
             "lora_alpha": 64,
+            "lora_dropout": 0.0,
+            "target_modules": [
+                "q_proj", "k_proj", "v_proj", "o_proj",
+                "gate_proj", "up_proj", "down_proj",
+            ],
+            "use_rslora": False,
+            # Schedule / duration
             "epochs": 5,
+            "max_steps": -1,            # -1 = use epochs; >0 overrides epochs
             "learning_rate": 1e-4,
+            "lr_scheduler_type": "cosine",
+            "warmup_ratio": 0.03,
+            "warmup_steps": 0,
+            "weight_decay": 0.01,
+            # Batch
+            "per_device_train_batch_size": 4,
+            "gradient_accumulation_steps": 4,
+            # Optimizer / precision / misc
+            "optim": "adamw_8bit",
             "seq_len": 2048,
+            "seed": 3407,
+            "logging_steps": 10,
+            "packing": False,
+            "gradient_checkpointing": True,
         }
         hp.update(self.inputs.get("hyperparams", {}))
         return hp
