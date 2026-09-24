@@ -295,6 +295,17 @@ class R2StorageClient:
         logger.debug("Put r2://%s/%s (%d bytes)", self.bucket, key, len(content))
         return {"key": key, "size": len(content)}
 
+    def delete(self, key: str) -> None:
+        """Delete an object at an explicit ``key`` (idempotent; no error if absent).
+        Used to clear a stale completion marker before a retry re-uses the same
+        prefix, so the poller waits for the NEW pod instead of tripping on the old."""
+        client = self._get_client()
+        try:
+            client.delete_object(Bucket=self.bucket, Key=key)
+            logger.debug("Deleted r2://%s/%s", self.bucket, key)
+        except Exception:  # noqa: BLE001 - S3 delete is idempotent; absence is fine
+            pass
+
     def copy_object(
         self,
         source_key: str,

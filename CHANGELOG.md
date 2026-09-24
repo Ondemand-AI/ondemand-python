@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.14.1] - 2026-09-24
+
+### Fixed
+
+`run_training_job` cleared the `_SUCCESS`/`_FAILED` markers before every GPU
+provision. The markers live under the `workflow_id`, which is shared across both
+hardware retries (exclude-and-reprovision) and Temporal activity retries, so a
+marker left by a previous pod made the poller "see" the next fresh pod finish in
+~1 second — it was terminated before it ever ran, and only the first pod produced
+a `gpu-logs/{pod_id}.log`. Now each provision starts from a clean slate and the
+poller waits for that pod only. New `R2Client.delete(key)` (idempotent).
+
 ## [1.14.0] - 2026-09-24
 
 ### Added

@@ -140,6 +140,13 @@ def run_training_job(input: TrainingInput) -> TrainingResult:
                 hw_attempt, _MAX_HW_ATTEMPTS, excluded_gpu_types or "-",
             )
         retry_hw = False
+        # Clear stale completion markers before provisioning. The markers live under
+        # the workflow_id, which is SHARED across hardware retries AND Temporal
+        # activity retries — so a marker written by a previous pod would make the
+        # poller "see" this fresh pod finish in ~1s (it never ran). Clearing here,
+        # right before each provision, means the poller waits for THIS pod only.
+        r2.delete(failed_marker)
+        r2.delete(success_marker)
         with runpod.dedicated_pod(
             image=input.training_image,
             name=f"train-{input.workflow_id}",
