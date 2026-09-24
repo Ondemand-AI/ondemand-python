@@ -66,6 +66,16 @@ class TrainingInput(WorkflowInput):
         return int(self.inputs.get("max_provision_wait_seconds", 1800))
 
     @property
+    def allowed_cuda_versions(self) -> Optional[list]:
+        """Optional: restrict provisioning to hosts whose driver supports one of
+        these CUDA versions (e.g. ["12.7","12.8"]). Empty = no filter. Guards
+        against a Community host with a driver too old for the training image
+        (the "driver too old / cannot find any torch accelerator" crash).
+        VERIFY the RunPod field + accepted strings on a real run before defaulting."""
+        v = self.inputs.get("allowed_cuda_versions")
+        return v or None
+
+    @property
     def training_image(self) -> str:
         """Docker image for the training pod (Unsloth entrypoint)."""
         return self.inputs.get("training_image", "")

@@ -35,6 +35,33 @@ logger = logging.getLogger("training")
 _POLL_INTERVAL_SECONDS = 15
 # R2 credential env vars passed through to the training pod so it can up/download.
 _R2_ENV_KEYS = ("R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_BUCKET")
+# How many DIFFERENT GPUs to try when a pod fails for a host/driver reason before
+# giving up. Bounded so a bad-host streak can't burn money forever.
+_MAX_HW_ATTEMPTS = 3
+
+# Substrings in a pod's _FAILED reason that mean the HOST is bad (wrong/old driver,
+# no usable GPU, eviction) rather than the training itself. On these we exclude that
+# GPU type and re-provision on a different one. OOM is deliberately NOT here: it is a
+# config/VRAM problem (lower batch or raise min_vram_gb), not a bad host to skip.
+_INFRA_FAILURE_SIGNS = (
+    "cannot find any torch accelerator",
+    "no cuda-capable device",
+    "cuda initialization",
+    "cuda driver version is insufficient",
+    "driver on your system is too old",
+    "forward compatibility",
+    "cuinit",
+    "no gpu",
+    "device-side assert",
+    "cuda unknown error",
+)
+
+
+def _is_infra_failure(reason: str) -> bool:
+    """True if a _FAILED reason looks like a bad host (driver/GPU), not a real
+    training bug. Drives 'exclude this GPU and re-provision on another'."""
+    r = (reason or "").lower()
+    return any(sign in r for sign in _INFRA_FAILURE_SIGNS)
 
 
 def _pod_env(input: TrainingInput) -> Dict[str, str]:
@@ -96,55 +123,107 @@ def run_training_job(input: TrainingInput) -> TrainingResult:
             input.volume_name, size_gb=60, region=input.region
         )
 
-    # Cheapest available GPU meeting min_vram across the clouds, waiting out a
-    # total shortage with backoff. gpu_type (if set) pins one instead. The context
-    # manager guarantees teardown even if the body raises/cancels.
-    with runpod.dedicated_pod(
-        image=input.training_image,
-        name=f"train-{input.workflow_id}",
-        min_vram_gb=input.min_vram_gb,
-        cloud_types=input.cloud_types,
-        env=_pod_env(input),
-        volume_id=volume_id,
-        max_wait_seconds=input.max_provision_wait_seconds,
-        heartbeat=activity.heartbeat,
-        gpu_type=input.gpu_type,
-    ) as pod:
-        gpu_log_key = f"{gpu_log_prefix(input.workflow_id)}{pod.id}.log"
-        report.step_completed("provision", "Provisionar GPU no RunPod",
-                              summary=f"pod {pod.id} | logs: {gpu_log_key}")
-        report.step_started("train", "Treino LoRA (Unsloth)")
-        logger.info("Pod %s treinando; logs em r2://%s; aguardando marcador em %s",
-                    pod.id, gpu_log_key, success_marker)
+    # Provision + train with hardware-failure resilience. If a pod fails for a HOST
+    # reason (driver too old, no CUDA device, eviction), exclude that GPU type and
+    # re-provision on a DIFFERENT one instead of retrying the same bad host (which is
+    # what plain Temporal retry did: the selector re-picked the same cheapest box).
+    # A REAL training failure (a bug, bad data) is surfaced with its reason from the
+    # pod's _FAILED marker and not retried on new hardware. A pinned gpu_type opts
+    # out of re-selection. The context manager guarantees teardown every attempt.
+    excluded_gpu_types: set = set()
+    last_reason = None
+    trained = False
+    for hw_attempt in range(1, _MAX_HW_ATTEMPTS + 1):
+        if hw_attempt > 1:
+            logger.warning(
+                "Re-provisionando GPU (tentativa %s/%s); tipos excluídos: %s",
+                hw_attempt, _MAX_HW_ATTEMPTS, excluded_gpu_types or "-",
+            )
+        retry_hw = False
+        with runpod.dedicated_pod(
+            image=input.training_image,
+            name=f"train-{input.workflow_id}",
+            min_vram_gb=input.min_vram_gb,
+            cloud_types=input.cloud_types,
+            env=_pod_env(input),
+            volume_id=volume_id,
+            max_wait_seconds=input.max_provision_wait_seconds,
+            heartbeat=activity.heartbeat,
+            gpu_type=input.gpu_type,
+            exclude_gpu_types=excluded_gpu_types,
+            allowed_cuda_versions=input.allowed_cuda_versions,
+        ) as pod:
+            gpu_log_key = f"{gpu_log_prefix(input.workflow_id)}{pod.id}.log"
+            report.step_completed("provision", "Provisionar GPU no RunPod",
+                                  summary=f"pod {pod.id} | logs: {gpu_log_key}")
+            report.step_started("train", "Treino LoRA (Unsloth)")
+            logger.info("Pod %s treinando; logs em r2://%s; aguardando marcador em %s",
+                        pod.id, gpu_log_key, success_marker)
 
-        # Poll R2 for the terminal marker. start_to_close_timeout on the activity
-        # bounds the total wait; heartbeat keeps Temporal/KEDA aware we are alive.
-        while True:
-            activity.heartbeat(f"waiting for {success_marker}")
-            if r2.object_exists(success_marker):
-                logger.info("Treino concluído (marcador _SUCCESS presente)")
-                break
-            if r2.object_exists(failed_marker):
-                report.step_failed("train", "Treino LoRA (Unsloth)",
-                                   error="training pod wrote _FAILED")
-                raise RuntimeError(f"Training failed: {failed_marker} present in R2")
-            # Liveness: a pod that died (e.g. a Community-cloud eviction) without a
-            # marker would otherwise hang until the activity timeout. Detect it and
-            # fail fast so Temporal re-provisions. Re-check the success marker first
-            # to close the race where the pod exits right after writing _SUCCESS.
-            if not runpod.pod_alive(pod):
+            # Poll R2 for the terminal marker. start_to_close_timeout on the activity
+            # bounds the total wait; heartbeat keeps Temporal/KEDA aware we are alive.
+            while True:
+                activity.heartbeat(f"waiting for {success_marker}")
                 if r2.object_exists(success_marker):
-                    logger.info("Treino concluído (pod saiu; _SUCCESS presente)")
+                    logger.info("Treino concluído (marcador _SUCCESS presente)")
+                    trained = True
                     break
-                report.step_failed("train", "Treino LoRA (Unsloth)",
-                                   error="pod died without a completion marker")
-                raise RuntimeError(
-                    f"Training pod {pod.id} died without _SUCCESS/_FAILED "
-                    "(likely a Community-cloud eviction) — will retry"
-                )
-            time.sleep(_POLL_INTERVAL_SECONDS)
+                if r2.object_exists(failed_marker):
+                    # The pod writes its error/traceback into the _FAILED body, so we
+                    # surface the actual cause instead of just "a marker exists".
+                    reason = r2.get_text(failed_marker) or "(pod escreveu _FAILED sem detalhe)"
+                    first_line = next((l for l in reason.splitlines() if l.strip()), "_FAILED")
+                    if (_is_infra_failure(reason) and not input.gpu_type
+                            and hw_attempt < _MAX_HW_ATTEMPTS):
+                        excluded_gpu_types.add(pod.gpu_type_id)
+                        last_reason = reason
+                        logger.warning("Falha de infra na GPU %s (%s): %s — trocando de GPU",
+                                       pod.gpu_type_id, pod.id, first_line)
+                        report.step_failed(
+                            "train", "Treino LoRA (Unsloth)",
+                            error=f"infra na GPU {pod.gpu_type_id}: {first_line} — reprovisionando",
+                        )
+                        retry_hw = True
+                    else:
+                        report.step_failed("train", "Treino LoRA (Unsloth)", error=first_line)
+                        raise RuntimeError(f"Training failed: {reason}")
+                    break
+                # Liveness: a pod that died without a marker (e.g. a Community-cloud
+                # eviction) is a host failure — exclude it and re-provision.
+                if not runpod.pod_alive(pod):
+                    if r2.object_exists(success_marker):
+                        logger.info("Treino concluído (pod saiu; _SUCCESS presente)")
+                        trained = True
+                        break
+                    if not input.gpu_type and hw_attempt < _MAX_HW_ATTEMPTS:
+                        excluded_gpu_types.add(pod.gpu_type_id)
+                        last_reason = f"pod {pod.id} morreu sem marcador (eviction?)"
+                        logger.warning("%s — trocando de GPU", last_reason)
+                        report.step_failed("train", "Treino LoRA (Unsloth)",
+                                           error="pod morreu sem marcador (eviction?) — reprovisionando")
+                        retry_hw = True
+                        break
+                    report.step_failed("train", "Treino LoRA (Unsloth)",
+                                       error="pod died without a completion marker")
+                    raise RuntimeError(
+                        f"Training pod {pod.id} died without _SUCCESS/_FAILED "
+                        "(likely a Community-cloud eviction)"
+                    )
+                time.sleep(_POLL_INTERVAL_SECONDS)
+        # pod torn down here (context manager)
+        if trained:
+            report.step_completed("train", "Treino LoRA (Unsloth)")
+            break
+        if retry_hw:
+            report.step_started("provision", "Provisionar GPU no RunPod")
+            continue
+        break
 
-        report.step_completed("train", "Treino LoRA (Unsloth)")
+    if not trained:
+        raise RuntimeError(
+            f"Treino falhou após tentar {_MAX_HW_ATTEMPTS} GPUs distintas "
+            f"(excluídas: {excluded_gpu_types or '-'}). Última causa: {last_reason}"
+        )
 
     # Pod is down here. Publish the manifest that points at this adapter.
     report.step_started("publish", "Publicar adapter")

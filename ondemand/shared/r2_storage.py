@@ -267,6 +267,18 @@ class R2StorageClient:
                 return False
             raise
 
+    def get_text(self, key: str, max_bytes: int = 8000) -> str:
+        """Read an object as UTF-8 text, best-effort and capped. Returns "" if the
+        object is missing or unreadable. Used to surface a training pod's _FAILED
+        reason (the pod writes its traceback into the marker) without ever raising."""
+        client = self._get_client()
+        try:
+            obj = client.get_object(Bucket=self.bucket, Key=key)
+            data = obj["Body"].read(max_bytes + 1)
+            return data[:max_bytes].decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 - a missing/unreadable reason is not fatal
+            return ""
+
     def put_bytes(
         self,
         key: str,

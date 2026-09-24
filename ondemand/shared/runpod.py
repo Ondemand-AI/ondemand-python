@@ -99,6 +99,7 @@ class PodHandle:
     id: str
     mode: str = "dedicated"
     endpoint_url: Optional[str] = None
+    gpu_type_id: Optional[str] = None
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -175,6 +176,7 @@ class RunPodClient:
         volume_gb: int = 0,
         cloud_type: str = "SECURE",
         registry_auth_id: Optional[str] = None,
+        allowed_cuda_versions: Optional[list] = None,
     ) -> PodHandle:
         """Create an on-demand GPU pod and return its handle (not yet ready).
 
@@ -231,13 +233,24 @@ class RunPodClient:
             gen_kwargs["data_center_id"] = self.region
 
         mutation = _pod_mutations.generate_pod_deployment_mutation(**gen_kwargs)
+        anchor = f'imageName: "{image}"'
         if registry_auth_id:
             # Inject the field the SDK generator omits, right after imageName.
-            anchor = f'imageName: "{image}"'
             mutation = mutation.replace(
                 anchor,
                 f'{anchor}\n        containerRegistryAuthId: "{registry_auth_id}"',
                 1,
+            )
+        if allowed_cuda_versions:
+            # Restrict to hosts whose driver supports one of these CUDA versions,
+            # so the selector never lands on a box with a driver too old for our
+            # image (the "NVIDIA driver too old / cannot find any torch accelerator"
+            # crash on some Community hosts). VERIFY: RunPod's create-pod input is
+            # version-sensitive; confirm the `allowedCudaVersions` field + accepted
+            # version strings on a real run before relying on it as a default.
+            versions = ", ".join(f'"{v}"' for v in allowed_cuda_versions)
+            mutation = mutation.replace(
+                anchor, f'{anchor}\n        allowedCudaVersions: [{versions}]', 1
             )
 
         raw = _runpod_graphql.run_graphql_query(mutation)
@@ -246,7 +259,7 @@ class RunPodClient:
         pod = raw["data"]["podFindAndDeployOnDemand"]
         pod_id = pod["id"]
         logger.info("Provisioned RunPod pod %s (%s on %s)", name, pod_id, gpu_type)
-        return PodHandle(id=pod_id, mode="dedicated", raw=pod)
+        return PodHandle(id=pod_id, mode="dedicated", gpu_type_id=gpu_type, raw=pod)
 
     def wait_pod_ready(
         self,
@@ -319,13 +332,19 @@ class RunPodClient:
         self,
         min_vram_gb: int,
         cloud_types=("SECURE", "COMMUNITY"),
+        exclude_gpu_types=(),
     ) -> list:
         """RunPod GPU types with >= min_vram, cheapest on-demand price first.
 
         Returns [{gpu_type_id, cloud_type, price, name, vram}] sorted by price.
         Actual stock is only known at deploy time, so this ranks by price and the
         caller falls back to the next candidate on a no-capacity error.
+
+        ``exclude_gpu_types`` drops GPU type ids that already failed for a
+        host/driver reason this run, so a retry picks a different GPU instead of
+        the same bad one.
         """
+        exclude = set(exclude_gpu_types or ())
         self._ensure_key()
         from runpod.api import graphql as _runpod_graphql
 
@@ -350,6 +369,8 @@ class RunPodClient:
         for g in (raw["data"]["gpuTypes"] or []):
             vram = g.get("memoryInGb") or 0
             if vram < min_vram_gb:
+                continue
+            if g["id"] in exclude:
                 continue
             for cloud in cloud_types:
                 if not g.get(self._CLOUD_AVAIL_FIELD[cloud]):
@@ -378,13 +399,16 @@ class RunPodClient:
         container_disk_gb: int = 20,
         ports: str = "8000/http",
         volume_mount_path: str = "/runpod-volume",
+        exclude_gpu_types=(),
+        allowed_cuda_versions: Optional[list] = None,
     ) -> PodHandle:
         """Provision the cheapest available GPU meeting min_vram, falling back on
         capacity. Raises GpuCapacityUnavailable if every candidate is out now."""
-        candidates = self.list_gpu_candidates(min_vram_gb, cloud_types)
+        candidates = self.list_gpu_candidates(min_vram_gb, cloud_types, exclude_gpu_types)
         if not candidates:
             raise GpuCapacityUnavailable(
                 f"No GPU type offered with >= {min_vram_gb}GB in {list(cloud_types)}"
+                + (f" (excluding {set(exclude_gpu_types)})" if exclude_gpu_types else "")
             )
         last_err = None
         for c in candidates:
@@ -398,6 +422,7 @@ class RunPodClient:
                     cloud_type=c["cloud_type"], env=env, volume_id=volume_id,
                     container_disk_gb=container_disk_gb, ports=ports,
                     volume_mount_path=volume_mount_path,
+                    allowed_cuda_versions=allowed_cuda_versions,
                 )
             except Exception as e:  # noqa: BLE001
                 if _is_no_capacity(e):
@@ -423,6 +448,8 @@ class RunPodClient:
         first_interval: int = 30,
         max_interval: int = 60,
         heartbeat=None,
+        exclude_gpu_types=(),
+        allowed_cuda_versions: Optional[list] = None,
     ) -> PodHandle:
         """``provision_cheapest`` but wait out a total shortage with backoff.
 
@@ -440,6 +467,8 @@ class RunPodClient:
                     cloud_types=cloud_types, env=env, volume_id=volume_id,
                     container_disk_gb=container_disk_gb, ports=ports,
                     volume_mount_path=volume_mount_path,
+                    exclude_gpu_types=exclude_gpu_types,
+                    allowed_cuda_versions=allowed_cuda_versions,
                 )
             except GpuCapacityUnavailable as e:
                 if time.time() >= deadline:
@@ -468,11 +497,15 @@ class RunPodClient:
         max_wait_seconds: int = 1800,
         heartbeat=None,
         gpu_type: Optional[str] = None,
+        exclude_gpu_types=(),
+        allowed_cuda_versions: Optional[list] = None,
     ):
         """Provision the cheapest available GPU (waiting out shortages) and ALWAYS
         tear it down — the teardown guarantee, even if the body raises/times out.
 
         Pass ``gpu_type`` to pin one specific GPU instead of the selector.
+        ``exclude_gpu_types`` skips GPU types that failed for a host reason;
+        ``allowed_cuda_versions`` restricts to hosts with a new-enough driver.
 
             with client.dedicated_pod(image=..., name=..., min_vram_gb=16) as pod:
                 ... use pod ...
@@ -484,6 +517,7 @@ class RunPodClient:
                 cloud_type=(cloud_types[0] if cloud_types else "SECURE"),
                 env=env, volume_id=volume_id, container_disk_gb=container_disk_gb,
                 ports=ports, volume_mount_path=volume_mount_path,
+                allowed_cuda_versions=allowed_cuda_versions,
             )
         else:
             handle = self.provision_with_wait(
@@ -492,6 +526,8 @@ class RunPodClient:
                 container_disk_gb=container_disk_gb, ports=ports,
                 volume_mount_path=volume_mount_path,
                 max_wait_seconds=max_wait_seconds, heartbeat=heartbeat,
+                exclude_gpu_types=exclude_gpu_types,
+                allowed_cuda_versions=allowed_cuda_versions,
             )
         try:
             yield handle

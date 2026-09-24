@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.14.0] - 2026-09-24
+
+### Added
+
+GPU training failures are now legible and self-healing instead of a dead-end retry
+on the same bad host:
+
+- **Failure reason surfaced.** `run_training_job` reads the pod's `_FAILED` marker
+  body (the training image now writes its error/traceback there) and raises
+  `RuntimeError(f"Training failed: {reason}")` plus a `step_failed` with the first
+  line, so the portal shows the real cause (e.g. "NVIDIA driver too old") instead of
+  "_FAILED present in R2". Needs the paired `ondemand-gpu` training image that writes
+  the reason into `_FAILED`. New `R2Client.get_text(key)` helper.
+- **Exclude-and-reprovision.** A host-class failure (old/insufficient driver, no CUDA
+  device, eviction) excludes that GPU type and re-provisions on a DIFFERENT one, up to
+  `_MAX_HW_ATTEMPTS` (3). Plain Temporal retry re-picked the same cheapest bad host;
+  this does not. A real training failure (bug/data) is surfaced and NOT retried on new
+  hardware; OOM is treated as config, not a bad host. `_is_infra_failure` classifies.
+  `PodHandle.gpu_type_id` now records the GPU type; `list_gpu_candidates` /
+  `provision_cheapest` / `provision_with_wait` / `dedicated_pod` take `exclude_gpu_types`.
+- **CUDA-version filter.** `dedicated_pod(..., allowed_cuda_versions=[...])` injects
+  `allowedCudaVersions` into the create-pod mutation so the selector never lands on a
+  host whose driver is too old for the image. `TrainingInput.allowed_cuda_versions`
+  exposes it (empty = no filter). **VERIFY** the RunPod field + accepted version
+  strings on a real run before defaulting it on.
+
 ## [1.13.0] - 2026-09-23
 
 ### Added
