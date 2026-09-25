@@ -94,6 +94,59 @@ def gpu_log_prefix(workflow_id: str) -> str:
     return f"artifacts/{workflow_id}/gpu-logs/"
 
 
+# How many adapter versions to keep per company (current + this many older).
+_KEEP_VERSIONS = 3
+
+
+def _prune_old_versions(r2, input, keep: int = _KEEP_VERSIONS) -> None:
+    """Keep only the newest ``keep`` adapter versions for this company.
+
+    A "version" is a versioned manifest ``{manifest_prefix}/{workflow_id}.json``
+    plus the adapter files it points at. We sort by the manifest's LastModified
+    (publish time), keep the newest ``keep``, and delete the rest — both the
+    manifest and its adapter directory.
+
+    Safety:
+      * ``latest.json`` is never a version and is never touched.
+      * whatever ``latest.json`` currently points at is protected even if a clock
+        skew would otherwise sort it out of the keep window.
+      * a failure here is logged and swallowed: the adapter is already published,
+        so housekeeping must never fail the run.
+    """
+    prefix = input.manifest_prefix
+    latest_key = f"{prefix}/latest.json"
+    try:
+        # Which adapter does latest point at? Protect it no matter what.
+        protected_prefixes = set()
+        try:
+            protected_prefixes.add(r2.get_json(latest_key).get("adapter_prefix"))
+        except Exception:  # noqa: BLE001 - no latest yet is fine
+            pass
+
+        # All versioned manifests (exclude latest.json and adapter files/markers).
+        manifests = [
+            o for o in r2.list_objects(f"{prefix}/")
+            if o["key"].endswith(".json") and not o["key"].endswith("/latest.json")
+        ]
+        # Newest first by publish time.
+        manifests.sort(key=lambda o: o["last_modified"], reverse=True)
+
+        for o in manifests[keep:]:
+            try:
+                adapter_prefix = r2.get_json(o["key"]).get("adapter_prefix")
+            except Exception:  # noqa: BLE001 - derive from the key if the body is gone
+                adapter_prefix = f"{prefix}/{o['key'].split('/')[-1][:-5]}"
+            if adapter_prefix and adapter_prefix in protected_prefixes:
+                continue  # never delete what latest points at
+            if adapter_prefix:
+                n = r2.delete_prefix(f"{adapter_prefix.rstrip('/')}/")
+                logger.info("Poda: removido adapter %s (%d objetos)", adapter_prefix, n)
+            r2.delete(o["key"])
+            logger.info("Poda: removido manifesto %s", o["key"])
+    except Exception as e:  # noqa: BLE001 - housekeeping must not fail the run
+        logger.warning("Poda de versões falhou (ignorado): %s", e)
+
+
 @activity.defn
 def run_training_job(input: TrainingInput) -> TrainingResult:
     """Provision GPU, train, publish adapter. Sync activity (blocking IO/poll)."""
@@ -250,6 +303,10 @@ def run_training_job(input: TrainingInput) -> TrainingResult:
     r2.put_bytes(latest_key, body, content_type="application/json")
     report.step_completed("publish", "Publicar adapter", summary=input.output_prefix)
     logger.info("Adapter publicado em %s (manifesto %s)", input.output_prefix, latest_key)
+
+    # Retention: keep only the newest N versions per company. Runs after the new
+    # adapter is live, so a prune failure never blocks a successful publish.
+    _prune_old_versions(r2, input)
 
     return TrainingResult(
         status="success",

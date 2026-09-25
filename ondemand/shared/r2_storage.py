@@ -10,6 +10,7 @@ at the end of a run. R2 credentials should be set in environment variables:
 """
 
 import os
+import json
 import logging
 import mimetypes
 from pathlib import Path
@@ -305,6 +306,48 @@ class R2StorageClient:
             logger.debug("Deleted r2://%s/%s", self.bucket, key)
         except Exception:  # noqa: BLE001 - S3 delete is idempotent; absence is fine
             pass
+
+    def list_objects(self, prefix: str) -> List[Dict[str, Any]]:
+        """List every object under ``prefix`` as ``{key, last_modified, size}``.
+
+        Paginates, so it is safe for prefixes with more than 1000 keys.
+        """
+        client = self._get_client()
+        paginator = client.get_paginator("list_objects_v2")
+        out: List[Dict[str, Any]] = []
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                out.append(
+                    {
+                        "key": obj["Key"],
+                        "last_modified": obj.get("LastModified"),
+                        "size": obj.get("Size", 0),
+                    }
+                )
+        return out
+
+    def get_json(self, key: str) -> Any:
+        """Read an object and parse it as JSON (used for adapter manifests)."""
+        client = self._get_client()
+        body = client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        return json.loads(body.decode("utf-8"))
+
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every object under ``prefix``. Returns the count removed.
+
+        Batches deletes 1000 at a time (the S3 DeleteObjects limit).
+        """
+        client = self._get_client()
+        keys = [o["key"] for o in self.list_objects(prefix)]
+        for i in range(0, len(keys), 1000):
+            batch = keys[i : i + 1000]
+            client.delete_objects(
+                Bucket=self.bucket,
+                Delete={"Objects": [{"Key": k} for k in batch]},
+            )
+        if keys:
+            logger.debug("Deleted %d objects under r2://%s/%s", len(keys), self.bucket, prefix)
+        return len(keys)
 
     def copy_object(
         self,

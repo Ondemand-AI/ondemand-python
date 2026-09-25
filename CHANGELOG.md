@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.15.0] - 2026-09-24
+
+### Added
+
+Adapter retention. `run_training_job` now prunes old adapter versions after
+publishing a new one, keeping only the newest `_KEEP_VERSIONS` (3: current + the
+last 2) per company. A "version" is a versioned manifest
+`{manifest_prefix}/{workflow_id}.json` plus the adapter directory it points at;
+both are deleted for stale versions, sorted by the manifest's publish time
+(`LastModified`). Safety: `latest.json` is never touched, whatever `latest.json`
+points at is protected even against clock skew, and a prune failure is logged and
+swallowed so it can never fail a run whose adapter is already live.
+
+New `R2StorageClient` methods backing it: `list_objects` (paginated), `get_json`,
+and `delete_prefix` (batched, 1000 at a time). Reuses the existing `delete`.
+
 ## [1.14.1] - 2026-09-24
 
 ### Fixed
