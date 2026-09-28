@@ -19,6 +19,7 @@ Usage inside an activity:
 All methods are no-ops when there is no run context (local runs).
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -158,6 +159,56 @@ def _step_report(
         "action": "STEP_REPORT",
         "payload": {
             "step_report": step_report,
+        },
+    })
+
+
+#: Upper bound on the serialized metrics object. The portal renders it as a
+#: small panel, not a data warehouse; a robot pushing more than this is almost
+#: certainly leaking raw rows into what should be an aggregate.
+_MAX_METRICS_BYTES = 16 * 1024
+
+
+def _run_report(
+    records_processed: Optional[int] = None,
+    metrics: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Send a RUN_REPORT (run-level result) to the webhook.
+
+    The portal stores this on ``process_runs.outputs.metrics`` and renders it
+    generically — it never hardcodes anything per automation. Keyed to the run
+    automatically via the workflow-id-scoped webhook URL.
+    """
+    run_report: Dict[str, Any] = {}
+    if records_processed is not None:
+        run_report["records_processed"] = int(records_processed)
+
+    if metrics:
+        # Validate here rather than let a bad blob fail silently at the webhook.
+        try:
+            encoded = json.dumps(metrics, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            logger.warning(f"run_summary metrics not JSON-serializable, dropped: {e}")
+            metrics = None
+        else:
+            if len(encoded.encode("utf-8")) > _MAX_METRICS_BYTES:
+                logger.warning(
+                    "run_summary metrics over %d bytes, dropped — send an "
+                    "aggregate, not raw rows.", _MAX_METRICS_BYTES
+                )
+                metrics = None
+        if metrics:
+            run_report["metrics"] = metrics
+
+    if not run_report:
+        return False
+
+    return _post({
+        "client": "ondemand-python",
+        "version": "2.0.0",
+        "action": "RUN_REPORT",
+        "payload": {
+            "run_report": run_report,
         },
     })
 
@@ -320,6 +371,53 @@ class ActivityReporter:
             step_name=step_id,
             status=StepStatus.RUNNING,  # the step's own transition is a separate report
             records=buffered,
+        )
+
+    def run_summary(
+        self,
+        *,
+        records_processed: Optional[int] = None,
+        kpis: Optional[List[Dict[str, Any]]] = None,
+        charts: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Report the run's aggregate result to the portal.
+
+        This is what fills the "Resumo do trabalho" panel on the run screen and
+        feeds the agent's fleet numbers. The robot decides what is meaningful for
+        its automation; the portal draws whatever it is sent, so nothing here is
+        specific to one robot.
+
+        Args:
+            records_processed: The count of business items this run handled
+                (e.g. transactions, documents). This is the reliable source for
+                the portal's "registros processados" — set it explicitly rather
+                than relying on the count of ``record()`` calls.
+            kpis: Headline numbers, each a dict::
+
+                    {"key": "conciliados", "label": "Conciliados",
+                     "value": 183, "format": "count", "tone": "ok"}
+
+                ``format`` is one of ``count|percent|currency|duration``;
+                ``tone`` (optional) is ``ok|warn|danger|info|pending``.
+            charts: Small charts, each a dict::
+
+                    {"key": "confianca", "label": "Confiança da classificação",
+                     "type": "donut",
+                     "series": [{"label": "Alta", "value": 183, "tone": "ok"},
+                                {"label": "Baixa", "value": 15, "tone": "danger"}]}
+
+                ``type`` is one of ``donut|bar``.
+
+        Call once, typically at the end of the run. A no-op on local runs.
+        """
+        metrics: Dict[str, Any] = {}
+        if kpis:
+            metrics["kpis"] = kpis
+        if charts:
+            metrics["charts"] = charts
+        _run_report(
+            records_processed=records_processed,
+            metrics=metrics or None,
         )
 
 

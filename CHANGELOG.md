@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.16.0] - 2026-09-28
+
+### Added
+
+Run-level metrics. New `report.run_summary(records_processed=, kpis=, charts=)`
+on the activity reporter sends a `RUN_REPORT` to the portal webhook, stored on
+`process_runs.outputs.metrics`. It is the channel a robot uses to fill the run
+screen's "Resumo do trabalho" panel (headline KPIs plus small donut/bar charts)
+and to report an explicit `records_processed` count — the reliable source for
+the portal's "registros processados", instead of inferring it from the number of
+`record()` calls (which left it at 0 for robots that only send step summaries).
+
+The metrics object is self-describing (`kpis` with `format`/`tone`, `charts` with
+`type` `donut|bar`), so the portal renders whatever a robot sends without any
+per-automation code. Validated JSON-serializable and capped at 16 KB; a no-op on
+local runs like the other reporter methods.
+
 ## [1.15.0] - 2026-09-24
 
 ### Added
