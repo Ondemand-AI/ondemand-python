@@ -596,7 +596,7 @@ class RunPodClient:
         endpoint_id: str,
         payload: Dict[str, Any],
         timeout: float = 600.0,
-        poll_interval: float = 1.0,
+        poll_interval: float = 5.0,
         heartbeat=None,
     ) -> Any:
         """Submit a job ASYNC and poll to completion, pinging ``heartbeat`` each poll.

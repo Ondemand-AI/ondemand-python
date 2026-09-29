@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.16.3] - 2026-09-29
+
+### Changed
+
+Serverless poll interval 1s → 5s. `serverless_run` polled the RunPod job status
+every second; the Temporal heartbeat only needs a ping well inside its ~2min
+timeout, so 5s cuts most of the status calls for at most a few seconds of extra
+latency detecting completion.
+
 ## [1.16.2] - 2026-09-29
 
 ### Added
