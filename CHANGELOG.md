@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.16.1] - 2026-09-28
+
+### Added
+
+Step duration at the source. `step_started` now records a monotonic start per
+step and `step_completed`/`step_failed`/`step_warning` send `duration_in_ms`, so
+`step_runs.duration_ms` is authoritative instead of the portal inferring it from
+timestamps (which was off by pod↔DB clock skew and empty when a step reported no
+start). This is what powers the agent's "Duração média por etapa" chart. The
+backend keeps a timestamp-derived fallback for older robots and past runs.
+
 ## [1.16.0] - 2026-09-28
 
 ### Added

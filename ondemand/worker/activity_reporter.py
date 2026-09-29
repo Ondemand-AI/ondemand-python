@@ -22,6 +22,7 @@ All methods are no-ops when there is no run context (local runs).
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from enum import Enum
 import atexit
@@ -238,6 +239,18 @@ class ActivityReporter:
         # step_id -> records awaiting a send. Process-local, which is correct:
         # one worker owns a step for its duration.
         self._records: Dict[str, list] = {}
+        # step_id -> monotonic start, so a step reports its own duration_in_ms
+        # instead of the portal inferring it from timestamps (which is off by the
+        # clock skew between the pod and the DB, and empty when a step reports no
+        # start). Monotonic, so it is immune to wall-clock adjustments mid-run.
+        self._step_starts: Dict[str, float] = {}
+
+    def _pop_duration_ms(self, step_id: str) -> Optional[int]:
+        """Elapsed ms since step_started for this step, if we saw its start."""
+        start = self._step_starts.pop(step_id, None)
+        if start is None:
+            return None
+        return max(0, int((time.monotonic() - start) * 1000))
 
     def step_started(
         self,
@@ -246,6 +259,7 @@ class ActivityReporter:
         parent: Optional[str] = None,
     ) -> None:
         """Report a step as started (running)."""
+        self._step_starts[step_id] = time.monotonic()
         _step_report(
             step_id=step_id,
             step_name=name,
@@ -280,6 +294,7 @@ class ActivityReporter:
             status=StepStatus.SUCCEEDED,
             parent_step_id=parent,
             end_time=_now(),
+            duration_ms=self._pop_duration_ms(step_id),
             summary=summary,
         )
 
@@ -300,6 +315,7 @@ class ActivityReporter:
             status=StepStatus.FAILED,
             parent_step_id=parent,
             end_time=_now(),
+            duration_ms=self._pop_duration_ms(step_id),
         )
 
     def step_warning(
@@ -322,6 +338,7 @@ class ActivityReporter:
             status=StepStatus.WARNING,
             parent_step_id=parent,
             end_time=_now(),
+            duration_ms=self._pop_duration_ms(step_id),
             summary=summary,
         )
 
