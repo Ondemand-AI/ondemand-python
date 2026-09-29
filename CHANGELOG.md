@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.16.4] - 2026-09-29
+
+### Changed
+
+`serverless_run` default timeout 600s → 1200s. The first job after a serverless
+image is pushed waits a full cold image pull (multi-GB CUDA/vLLM, ~12min) before a
+worker is ready; 600s expired while the job sat IN_QUEUE and sank the batch. A
+warmed endpoint still answers in seconds, so the higher ceiling only bites on a
+genuine cold pull. Callers that pass `timeout` explicitly are unaffected.
+
 ## [1.16.3] - 2026-09-29
 
 ### Changed

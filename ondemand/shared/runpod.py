@@ -595,7 +595,7 @@ class RunPodClient:
         self,
         endpoint_id: str,
         payload: Dict[str, Any],
-        timeout: float = 600.0,
+        timeout: float = 1200.0,
         poll_interval: float = 5.0,
         heartbeat=None,
     ) -> Any:
@@ -606,6 +606,11 @@ class RunPodClient:
         mid-flight, and orphan RunPod jobs pile up. This polls with a heartbeat and
         cancels the job on timeout. Returns the job output; raises on failure/timeout
         (the caller decides whether one failure should sink a whole batch).
+
+        Default 1200s (20min): the FIRST job after a new image is pushed can wait a
+        full cold image pull (multi-GB CUDA/vLLM, ~12min) before a worker is ready;
+        600s used to expire IN_QUEUE and sink the batch. A warmed endpoint answers in
+        seconds, so this ceiling only bites on a genuine cold pull.
         """
         self._ensure_key()
         # Hand the serverless worker the obs env so its per-job log reaches HyperDX
