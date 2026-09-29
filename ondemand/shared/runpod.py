@@ -212,7 +212,24 @@ class RunPodClient:
                 .replace("\r", "")
             )
 
-        safe_env = {k: _esc(v) for k, v in (env or {}).items()}
+        # Give the GPU pod the observability env so its OWN stdout can be shipped
+        # to HyperDX under the SAME service as the automation that launched it,
+        # tagged with the run — one filter then follows portal → api → robot → GPU.
+        # Read from the robot's own env + run context; an explicit caller env wins.
+        from ondemand.shared.run_context import current_workflow_id, current_temporal_run_id
+        obs_env: Dict[str, Any] = {}
+        for _k in ("HYPERDX_API_KEY", "OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT", "DEPLOYMENT_ENVIRONMENT"):
+            _v = os.environ.get(_k)
+            if _v:
+                obs_env[_k] = _v
+        _wf = current_workflow_id()
+        if _wf:
+            obs_env["TEMPORAL_WORKFLOW_ID"] = _wf
+        _rid = current_temporal_run_id()
+        if _rid:
+            obs_env["TEMPORAL_RUN_ID"] = _rid
+
+        safe_env = {k: _esc(v) for k, v in {**obs_env, **(env or {})}.items()}
 
         gen_kwargs: Dict[str, Any] = {
             "name": name,
@@ -591,6 +608,23 @@ class RunPodClient:
         (the caller decides whether one failure should sink a whole batch).
         """
         self._ensure_key()
+        # Hand the serverless worker the obs env so its per-job log reaches HyperDX
+        # under the launching automation's service, tagged with the run — same
+        # correlation the dedicated pod gets via its container env.
+        from ondemand.shared.run_context import current_workflow_id, current_temporal_run_id
+        _obs: Dict[str, Any] = {}
+        for _k in ("HYPERDX_API_KEY", "OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT", "DEPLOYMENT_ENVIRONMENT"):
+            _v = os.environ.get(_k)
+            if _v:
+                _obs[_k] = _v
+        _wf = current_workflow_id()
+        if _wf:
+            _obs["TEMPORAL_WORKFLOW_ID"] = _wf
+        _rid = current_temporal_run_id()
+        if _rid:
+            _obs["TEMPORAL_RUN_ID"] = _rid
+        if _obs:
+            payload = {**payload, "_obs": _obs}
         endpoint = _runpod_sdk.Endpoint(endpoint_id)
         job = endpoint.run(payload)
         deadline = time.time() + timeout

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.16.2] - 2026-09-29
+
+### Added
+
+GPU logs to HyperDX, under the launching automation's service. The RunPod client
+now injects the observability env (`HYPERDX_API_KEY`, `OTEL_SERVICE_NAME`,
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `DEPLOYMENT_ENVIRONMENT`) plus the run correlation
+(`TEMPORAL_WORKFLOW_ID` / `TEMPORAL_RUN_ID`) into every GPU pod's container env
+(`_create_pod`) and into the serverless job input (`serverless_run`, under `_obs`).
+The `ondemand-gpu` images read these and stream their stdout to HyperDX, so a
+single `TemporalWorkflowID` filter follows portal → api → robot → GPU. No-op when
+`HYPERDX_API_KEY` is absent.
+
 ## [1.16.1] - 2026-09-28
 
 ### Added
