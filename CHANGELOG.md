@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.16.5] - 2026-10-05
+
+### Changed
+
+`[worker]` now requires `ondemand-obs[temporal,llm]>=0.1.9`. Robots pick it up on
+their next container start (the boot-time upgrade only moves a dependency when
+the floor demands it, which is why the floor moves here).
+
+What a robot now sends to HyperDX:
+- Webhooks to our API carry their request body (secret-looking keys redacted).
+  Before, the body hook read a field httpx never had and captured nothing.
+- Any 4xx/5xx response body, from any host, as a log in the same trace (never
+  in the portal console). Third-party request bodies are still never recorded.
+- OpenAI / Anthropic SDK calls as `gen_ai` spans: model, tokens, finish reason,
+  tool calls, latency. Prompt and completion text are off.
+
 ## [1.16.4] - 2026-09-29
 
 ### Changed

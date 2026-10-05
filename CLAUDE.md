@@ -45,7 +45,7 @@ from ondemand.shared import get_logger
 ## Dependencies
 
 - Base: `requests`, `httpx`, `boto3`
-- `[worker]` extra: `temporalio>=1.7.0`, `ondemand-obs[temporal]>=0.1.0`
+- `[worker]` extra: `temporalio>=1.7.0`, `ondemand-obs[temporal,llm]>=0.1.9`
 
 ## Release process
 
