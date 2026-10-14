@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.16.6] - 2026-10-14
+
+### Changed
+
+`[worker]` now requires `ondemand-obs[temporal,llm]>=0.1.10`: robots record the
+**full request body of every HTTP call**, on every host (bank portals,
+government sites, client APIs, LLM APIs), up to 64 KB. A 4xx/5xx error log now
+carries the request body that provoked it next to the response.
+
+Our credentials stay out. `bw_get_item()` registers each item's password, TOTP
+seed and custom field values with ondemand-obs, which scrubs them by value from
+every recorded body, whatever the site calls the field. Secret-named env vars
+(`BW_PASSWORD`, `ONDEMAND_WEBHOOK_SECRET`, `HYPERDX_API_KEY`, ...) are scrubbed
+the same way, and nothing from the Bitwarden CLI server on localhost is recorded.
+
 ## [1.16.5] - 2026-10-05
 
 ### Changed

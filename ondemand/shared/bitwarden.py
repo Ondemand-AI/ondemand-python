@@ -40,7 +40,29 @@ def bw_connect() -> None:
         bw_login_from_env()
 
 
+def _keep_out_of_telemetry(item: Any) -> None:
+    """Register the item's credentials with ondemand-obs, which scrubs them by
+    value from every HTTP body it records. By value because a client portal's
+    password field can be called anything. The username stays: it is usually a
+    CPF or e-mail, which bodies legitimately carry. Custom fields all go: their
+    names say nothing reliable about whether they are secret."""
+    try:
+        from ondemand_obs import register_secret
+    except ImportError:
+        return
+    register_secret(getattr(item, "password", None))
+    register_secret(getattr(item, "totp_key", None))
+    for value in (getattr(item, "fields", None) or {}).values():
+        register_secret(value)
+
+
 def bw_get_item(item_name: str, collection_name: str | None = None) -> Any:
     """Get a vault item by name. Requires bw_connect() to have been called first."""
     from t_vault import bw_get_item as _bw_get_item
-    return _bw_get_item(item_name, collection_name)
+    item = _bw_get_item(item_name, collection_name)
+    try:
+        _keep_out_of_telemetry(item)
+    except Exception:
+        # Observability must never stop a robot from getting its credentials.
+        pass
+    return item
