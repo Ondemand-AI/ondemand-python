@@ -52,6 +52,30 @@ class RunPodKeyMissingError(RuntimeError):
     """Raised when a GPU operation is attempted with no RUNPOD_API_KEY set."""
 
 
+class ServerlessSubmitError(RuntimeError):
+    """RunPod refused to accept a serverless job (the ``/run`` submit returned 4xx/5xx).
+
+    Carries ``status_code`` and RunPod's response ``body``, which says why (e.g. the
+    endpoint's max workers is 0, or it is disabled). ``retryable`` is False for a 4xx
+    other than 408/429: the endpoint config will not fix itself, so the caller should
+    stop the batch instead of submitting every chunk into the same refusal.
+    """
+
+    def __init__(self, endpoint_id: str, status_code: Optional[int], body: str):
+        self.endpoint_id = endpoint_id
+        self.status_code = status_code
+        self.body = body
+        super().__init__(
+            f"RunPod recusou o job no endpoint serverless '{endpoint_id}' "
+            f"(HTTP {status_code}): {body or '(resposta sem corpo)'}"
+        )
+
+    @property
+    def retryable(self) -> bool:
+        code = self.status_code or 0
+        return not (400 <= code < 500) or code in (408, 429)
+
+
 class GpuCapacityUnavailable(RuntimeError):
     """Raised when no GPU matching the spec could be provisioned right now.
 
@@ -631,7 +655,19 @@ class RunPodClient:
         if _obs:
             payload = {**payload, "_obs": _obs}
         endpoint = _runpod_sdk.Endpoint(endpoint_id)
-        job = endpoint.run(payload)
+        try:
+            job = endpoint.run(payload)
+        except Exception as e:  # noqa: BLE001
+            # The SDK's raise_for_status() message ("409 Client Error: Conflict for
+            # url") drops RunPod's body, which is the only place the reason lives.
+            resp = getattr(e, "response", None)
+            if resp is None:
+                raise
+            try:
+                body = (resp.text or "").strip()[:500]
+            except Exception:  # noqa: BLE001
+                body = ""
+            raise ServerlessSubmitError(endpoint_id, getattr(resp, "status_code", None), body) from e
         deadline = time.time() + timeout
         terminal = ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT")
         st = None

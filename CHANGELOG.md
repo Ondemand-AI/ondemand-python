@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.16.7] - 2026-11-01
+
+### Changed
+
+`RunPodClient.serverless_run()` raises `ServerlessSubmitError` when RunPod refuses
+the job at submit (`/run` returns 4xx/5xx). Its message carries RunPod's response
+body, which the SDK's `409 Client Error: Conflict for url` dropped, so the reason
+(e.g. the endpoint's max workers went to 0) shows up in the run's error. It also
+exposes `status_code`, `body` and `retryable` (False for a 4xx other than
+408/429), so a robot can stop a batch at the first refusal instead of submitting
+every chunk into it. Still a `RuntimeError`, so existing `except` clauses keep
+working.
+
 ## [1.16.6] - 2026-10-14
 
 ### Changed
