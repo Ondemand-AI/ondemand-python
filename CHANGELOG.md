@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.16.8] - 2026-11-04
+
+### Changed
+
+`[worker]` now requires `ondemand-obs[temporal,llm]>=0.1.11`. Robots send telemetry
+to the Ondemand hub, `https://otel.ondemand-ai.com.br`, which exports to both
+hyperdx.io and our self-hosted HyperDX v2, instead of straight to hyperdx.io. The
+hub endpoint is also published as `OTEL_EXPORTER_OTLP_ENDPOINT`, and the RunPod
+client already forwards that to the GPU pods and serverless workers it launches,
+so their logs follow. Robots pick this up through the container-start auto-upgrade.
+
 ## [1.16.7] - 2026-11-01
 
 ### Changed
