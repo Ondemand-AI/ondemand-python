@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.19.0] - 2026-11-05
+
+### Added
+
+GPU work on RunPod joins the robot's trace. The GPU images (`ondemand-gpu`) now report
+as their own service, `ondemand-gpu`, and start their spans as children of the robot's:
+
+- **serverless:** `serverless_run` opens a CLIENT span `runpod.serverless.job`
+  (`peer.service=ondemand-gpu`, endpoint, prompt count, adapter, job id and status)
+  and sends its W3C context in the job input as `_obs.traceparent` / `_obs.tracestate`.
+- **dedicated pods** (training, serving): `provision_pod` adds `TRACEPARENT` /
+  `TRACESTATE` to the pod env (an explicit caller env still wins). Serving requests
+  already carry `traceparent` per HTTP call through the httpx instrumentation.
+
+Best-effort and backward compatible: no OpenTelemetry or no current span means no
+keys; old images ignore them, and new images start a root span without them.
+
 ## [1.18.1] - 2026-11-05
 
 ### Fixed
