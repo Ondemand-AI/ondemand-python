@@ -98,6 +98,39 @@ class _WorkTracker:
 _work = _WorkTracker()
 
 
+def _organization_id_of(input) -> Optional[str]:
+    """organization_id of the run, from the activity's first argument: the
+    WorkflowInput the portal sent (a dataclass after conversion, or a plain dict
+    for robots that take one). None when the activity takes something else."""
+    args = getattr(input, "args", None) or ()
+    if not args:
+        return None
+    first = args[0]
+    value = first.get("organization_id") if isinstance(first, dict) else getattr(first, "organization_id", None)
+    return value if isinstance(value, str) and value else None
+
+
+def _bind_organization(input):
+    try:
+        import ondemand_obs
+
+        bind = getattr(ondemand_obs, "bind_organization", None)  # ondemand-obs >= 0.1.14
+        return bind(_organization_id_of(input)) if bind else None
+    except Exception:
+        return None
+
+
+def _reset_organization(token) -> None:
+    if token is None:
+        return
+    try:
+        import ondemand_obs
+
+        ondemand_obs.reset_organization(token)
+    except Exception:
+        pass
+
+
 class _OndemandActivityInterceptor(ActivityInboundInterceptor):
     """Publishes the run context into the environment before each activity.
 
@@ -110,6 +143,15 @@ class _OndemandActivityInterceptor(ActivityInboundInterceptor):
     """
 
     async def execute_activity(self, input):
+        # Whose run this is: telemetry and errors carry OrganizationID (ondemand-obs
+        # >= 0.1.14). A contextvar, so it is per activity task, unlike the env below.
+        org_token = _bind_organization(input)
+        try:
+            return await self._execute_activity(input)
+        finally:
+            _reset_organization(org_token)
+
+    async def _execute_activity(self, input):
         info = activity.info()
         workflow_id = info.workflow_id
         app_url = os.environ.get("ONDEMAND_APP_URL", "")

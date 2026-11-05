@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.18.0] - 2026-11-05
+
+### Added
+
+Every span, log and error of a robot now says **whose run** it is, so one robot's
+telemetry and its Better Stack Errors app can be filtered by client. `[worker]`
+requires `ondemand-obs[temporal,llm]>=0.1.14`.
+
+- `OrganizationID`: the activity interceptor reads `organization_id` from the
+  activity's `WorkflowInput` (dataclass or dict) and binds it per activity task
+  (a contextvar, so concurrent activities on one pod never mix them up).
+- `TemporalNamespace`: added by ondemand-obs from Temporal's info. In production
+  it is the organization's code; in development every organization shares `dev`.
+- Also on `SENTRY_DSN_FALLBACK` (ondemand-obs 0.1.13): a robot reports to its own
+  Errors app (`SENTRY_DSN`) or, without one, to the shared fallback app.
+
 ## [1.17.0] - 2026-11-05
 
 ### Added
