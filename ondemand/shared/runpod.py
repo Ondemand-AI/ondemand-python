@@ -252,6 +252,10 @@ class RunPodClient:
         _rid = current_temporal_run_id()
         if _rid:
             obs_env["TEMPORAL_RUN_ID"] = _rid
+        # W3C context of the current span (TRACEPARENT/TRACESTATE): the pod's spans
+        # (service ondemand-gpu) start as its children. See ondemand.shared.gpu_trace.
+        from ondemand.shared.gpu_trace import trace_env
+        obs_env.update(trace_env())
 
         safe_env = {k: _esc(v) for k, v in {**obs_env, **(env or {})}.items()}
 
@@ -652,6 +656,27 @@ class RunPodClient:
         _rid = current_temporal_run_id()
         if _rid:
             _obs["TEMPORAL_RUN_ID"] = _rid
+        # One CLIENT span per job; its W3C context rides in _obs so the GPU's job
+        # span (service ondemand-gpu) is its child. See ondemand.shared.gpu_trace.
+        from ondemand.shared.gpu_trace import serverless_job_span
+        with serverless_job_span(endpoint_id, payload) as span:
+            return self._serverless_submit_and_wait(
+                endpoint_id, payload, _obs, timeout, poll_interval, heartbeat, span,
+            )
+
+    def _serverless_submit_and_wait(
+        self,
+        endpoint_id: str,
+        payload: Dict[str, Any],
+        _obs: Dict[str, Any],
+        timeout: float,
+        poll_interval: float,
+        heartbeat,
+        span,
+    ) -> Any:
+        """``serverless_run``'s body, inside its CLIENT span (``span``, may be None)."""
+        from ondemand.shared.gpu_trace import set_span_attribute, trace_carrier
+        _obs = {**_obs, **trace_carrier()}
         if _obs:
             payload = {**payload, "_obs": _obs}
         endpoint = _runpod_sdk.Endpoint(endpoint_id)
@@ -668,6 +693,7 @@ class RunPodClient:
             except Exception:  # noqa: BLE001
                 body = ""
             raise ServerlessSubmitError(endpoint_id, getattr(resp, "status_code", None), body) from e
+        set_span_attribute(span, "runpod.job.id", getattr(job, "job_id", None))
         deadline = time.time() + timeout
         terminal = ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT")
         st = None
@@ -687,6 +713,7 @@ class RunPodClient:
                 except Exception:  # noqa: BLE001
                     pass
             time.sleep(poll_interval)
+        set_span_attribute(span, "runpod.job.status", st)
         if st != "COMPLETED":
             raise RuntimeError(f"serverless job ended {st}")
         return job.output()
