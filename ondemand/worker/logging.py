@@ -22,6 +22,7 @@ Usage — manual setup (if not using OndemandWorker):
 """
 
 import atexit
+import contextvars
 import logging
 import os
 import sys
@@ -90,7 +91,12 @@ class OndemandLogHandler(logging.Handler):
             self._cancel_timer()
             self.flush()
         elif not self._flush_timer:
-            self._flush_timer = threading.Timer(self.FLUSH_INTERVAL_SECONDS, self.flush)
+            # Run the delayed flush inside a copy of the caller's context. A bare
+            # Timer thread starts with an empty one: its webhook POST then had no
+            # OTel parent (an orphan span, no TemporalWorkflowID/OrganizationID)
+            # and run_context fell back to the process-global env vars.
+            ctx = contextvars.copy_context()
+            self._flush_timer = threading.Timer(self.FLUSH_INTERVAL_SECONDS, ctx.run, args=(self.flush,))
             self._flush_timer.daemon = True
             self._flush_timer.start()
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.18.1] - 2026-11-05
+
+### Fixed
+
+The portal console stream (`LOG_STREAM` webhook) flushed from a bare
+`threading.Timer`, which starts with an empty context: its POST was an orphan span
+(no parent, no `TemporalWorkflowID` / `OrganizationID`) and the webhook URL fell back
+to the process-global env vars. The delayed flush now runs in a copy of the logging
+code's context, so it joins the activity's trace and uses that run's webhook.
+
 ## [1.18.0] - 2026-11-05
 
 ### Added
