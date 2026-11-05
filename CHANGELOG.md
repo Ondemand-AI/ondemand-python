@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.17.0] - 2026-11-05
+
+### Added
+
+Robot exceptions reach Better Stack **Error tracking**. `[worker]` now requires
+`ondemand-obs[temporal,llm]>=0.1.12`, which brings `sentry-sdk` 2.x and starts it
+when `SENTRY_DSN` is set (the robots' `ondemand-shared` secret carries it; no DSN,
+no-op). Better Stack Errors only ingests Sentry-SDK events, so OTel span
+exceptions and ERROR logs never showed up there.
+
+- Temporal catches activity exceptions, so a new innermost activity interceptor
+  reports each failed attempt (tags `TemporalWorkflowID`, `TemporalRunID`,
+  `temporal.workflow_type`, `temporal.activity_type`, `temporal.attempt`) and
+  re-raises it unchanged: retries and the workflow see exactly what they did
+  before. Cancellation is not reported. The event links to the activity's OTel
+  trace (trace_id/span_id).
+- A worker crash (`Worker error`) is reported and flushed before `sys.exit(1)`;
+  anything else unhandled goes through the Sentry excepthook. Error tracking
+  starts in `OndemandWorker.__init__`, so startup failures are covered too.
+- The same exception object is never reported twice. Sentry tracing is off;
+  OpenTelemetry stays the telemetry pipeline.
+
 ## [1.16.8] - 2026-11-04
 
 ### Changed

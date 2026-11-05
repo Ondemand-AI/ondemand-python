@@ -45,7 +45,7 @@ from ondemand.shared import get_logger
 ## Dependencies
 
 - Base: `requests`, `httpx`, `boto3`
-- `[worker]` extra: `temporalio>=1.7.0`, `ondemand-obs[temporal,llm]>=0.1.9`
+- `[worker]` extra: `temporalio>=1.7.0`, `ondemand-obs[temporal,llm]>=0.1.12` (brings `sentry-sdk` 2.x: activity failures and worker crashes go to Better Stack Errors when `SENTRY_DSN` is set, see `_ErrorCaptureActivityInterceptor` in `worker/base.py`)
 
 ## Release process
 

@@ -169,7 +169,85 @@ class _OndemandInterceptor(Interceptor):
         return _OndemandActivityInterceptor(next)
 
 
+def _configure_error_tracking(service_name: str) -> None:
+    """Better Stack Errors via ondemand-obs (opt-in: SENTRY_DSN). Never raises."""
+    try:
+        import ondemand_obs
+        ondemand_obs.configure_error_tracking(service_name)
+    except (ImportError, AttributeError):
+        pass  # ondemand-obs older than 0.1.12
+
+
+def _capture_exception(exc: BaseException, tags: Optional[Dict[str, str]] = None) -> None:
+    try:
+        import ondemand_obs
+        ondemand_obs.capture_exception(exc, tags=tags)
+    except (ImportError, AttributeError):
+        pass
+
+
+def _flush_errors() -> None:
+    try:
+        import ondemand_obs
+        ondemand_obs.flush_errors()
+    except (ImportError, AttributeError):
+        pass
+
+
+# Exceptions that are Temporal control flow, not failures: cancellation (worker
+# shutdown, workflow cancel, heartbeat timeout). Async completion
+# (activity.raise_complete_async) is a BaseException and never reaches
+# `except Exception`.
+try:
+    from temporalio.exceptions import CancelledError as _TemporalCancelledError
+except ImportError:  # pragma: no cover
+    _TemporalCancelledError = ()
+
+
+class _ErrorCaptureActivityInterceptor(ActivityInboundInterceptor):
+    """Reports a failed activity attempt to Better Stack Errors, then re-raises.
+
+    Temporal catches activity exceptions and turns them into failures, so the
+    Sentry SDK's global hooks never see them: without this, a robot's real
+    errors would never reach Error tracking. One event per failed attempt,
+    tagged with the attempt number; the exception propagates unchanged, so
+    Temporal's retry policy and the workflow see exactly what they did before.
+
+    Registered as the INNERMOST interceptor (last in the list), inside
+    Temporal's TracingInterceptor, so the RunActivity span is still current and
+    the event links to the activity's trace.
+    """
+
+    async def execute_activity(self, input):
+        try:
+            return await super().execute_activity(input)
+        except _TemporalCancelledError:
+            raise
+        except Exception as e:
+            tags = {"ondemand.failure": "activity"}
+            try:
+                info = activity.info()
+                tags.update({
+                    "TemporalWorkflowID": info.workflow_id,
+                    "TemporalRunID": info.workflow_run_id,
+                    "temporal.workflow_type": info.workflow_type,
+                    "temporal.activity_type": info.activity_type,
+                    "temporal.attempt": str(info.attempt),
+                })
+            except Exception:
+                pass
+            _capture_exception(e, tags)
+            raise
+
+
+class _ErrorCaptureInterceptor(Interceptor):
+    def intercept_activity(self, next):
+        return _ErrorCaptureActivityInterceptor(next)
+
+
 def _build_interceptors() -> list:
+    # Order matters: temporalio wraps them so the FIRST is outermost and the
+    # LAST is innermost (closest to the activity function).
     interceptors = [_OndemandInterceptor()]
     try:
         import ondemand_obs
@@ -177,6 +255,8 @@ def _build_interceptors() -> list:
             interceptors.append(ondemand_obs.get_temporal_tracing_interceptor())
     except ImportError:
         pass
+    # Innermost, so the tracing span is still current when it captures.
+    interceptors.append(_ErrorCaptureInterceptor())
     return interceptors
 
 
@@ -319,6 +399,9 @@ class OndemandWorker:
                 f"{self.name!r}). Drop the argument; it is set by the deploy "
                 f"pipeline from process_id."
             )
+        # As early as possible, so a crash from here on (missing env vars in
+        # from_env() included) reaches Better Stack Errors via the excepthook.
+        _configure_error_tracking(self.name)
         self.config = WorkerConfig.from_env()
         self._workflows: List[Any] = []
         self._activities: List[Callable] = []
@@ -478,6 +561,8 @@ class OndemandWorker:
             logger.info("Worker cancelled, shutting down gracefully")
         except Exception as e:
             logger.error(f"Worker error: {e}")
+            _capture_exception(e, {"ondemand.failure": "worker"})
+            _flush_errors()
             sys.exit(1)
         finally:
             if watchdog:
