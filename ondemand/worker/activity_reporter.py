@@ -332,6 +332,10 @@ class ActivityReporter:
             summary: Optional one-line result shown beside the step, e.g.
                 "1 nota com alertas". See step_completed.
         """
+        # Flushed like completed and failed. Without it a step that ended with
+        # warnings never sent its records, so the portal had no list to open for
+        # exactly the steps whose records someone needs to read.
+        self.flush_records(step_id)
         _step_report(
             step_id=step_id,
             step_name=name or step_id,
@@ -349,6 +353,7 @@ class ActivityReporter:
         parent: Optional[str] = None,
     ) -> None:
         """Report a step as skipped."""
+        self.flush_records(step_id)
         _step_report(
             step_id=step_id,
             step_name=name or step_id,

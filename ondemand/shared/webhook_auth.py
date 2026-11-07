@@ -13,6 +13,8 @@ which is how it stayed unset everywhere without anyone noticing.
 One name, one place to read it, one place to build the headers.
 """
 
+from __future__ import annotations
+
 import os
 
 #: Environment variable holding the shared secret. The API accepts it as

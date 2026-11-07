@@ -21,6 +21,8 @@ from ondemand.shared.artifacts import (
     load_state,
 )
 from ondemand.shared.approval import request_approval, fact, ApprovalRequestError
+from ondemand.shared.approval_decision import ApprovalDecision
+from ondemand.shared.notifications import notify, NotificationError
 from ondemand.shared.bitwarden import bw_connect, bw_get_item
 # cli.py removed — old RCC CLI parsing, not used in new Temporal architecture
 from ondemand.shared.logging import get_logger, configure_logging, OndemandLogger
@@ -65,6 +67,9 @@ __all__ = [
     "request_approval",
     "fact",
     "ApprovalRequestError",
+    "ApprovalDecision",
+    "notify",
+    "NotificationError",
     "bw_connect",
     "bw_get_item",
     # Exception tracking

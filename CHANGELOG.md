@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.20.0] - 2026-11-07
+
+### Fixed
+
+- `step_warning` and `step_skipped` now send the records buffered for the step, like
+  `step_completed` and `step_failed` already did. A step that ended with warnings never
+  sent its records, so the portal had no record list to open for exactly the steps that
+  needed reading.
+
+### Added
+
+Notifications and e-mails are triggered from the robot's code; the portal only displays
+them.
+
+- `request_approval(..., notify=True, email=None)`: two keyword-only options. The
+  webhook payload gains `"notify": {"portal": <bool>, "email": [<addresses>]}`, and the
+  API creates an in-portal notification for the run's organization and e-mails each
+  address an approval message with Aprovar / Rejeitar buttons. `email` takes one
+  address or a list; addresses are stripped, validated (`ValueError` before any HTTP
+  call) and de-duplicated. The return value is unchanged, so robots that deliver the
+  URLs themselves keep working.
+- **Default change:** `notify=True`, so every approval from a 1.20.0 robot creates a
+  portal notification. Pass `notify=False` to opt out. An API that predates
+  notifications ignores the extra key and behaves exactly as before.
+- `notify(title, body=None, level="info", email=None, link=None) -> str`: posts the new
+  `NOTIFY` action (same webhook, headers and retry policy as `request_approval`) and
+  returns the `notification_id`. `level` is one of info, success, warning, error; the
+  title is required, trimmed and at most 200 characters; `link` is an http(s) URL or a
+  portal path. Raises the new `NotificationError` outside a run, after 3 failed
+  attempts, or when the API answers without a `notification_id` (an API without
+  `NOTIFY`).
+- `ApprovalDecision.from_signal(data)`: a typed view of the `human_approval` signal,
+  which now carries `{approved, comment, resolved_by}`. Fails closed (only
+  `approved is True` approves) and accepts the old `{approved}` payload. Standard
+  library only, importable inside the workflow sandbox from
+  `ondemand.shared.approval_decision`.
+- `notify`, `NotificationError` and `ApprovalDecision` are exported from `ondemand` and
+  `ondemand.shared`.
+
+### Changed
+
+- The POST-with-retries logic moved from `request_approval` to
+  `ondemand.shared.webhook_client.post_webhook_with_retries`, shared with `notify`. A
+  200 whose body lacks what the caller needs (approval URLs, notification id) now
+  fails at once instead of being retried: the API already acted on it, and a retry
+  only created a duplicate approval record.
+
+### Fixed
+
+- `import ondemand` failed on Python 3.9 (`str | None` annotations in
+  `webhook_auth.py` and `bitwarden.py`); both now use postponed annotations.
+
 ## [1.19.0] - 2026-11-05
 
 ### Added

@@ -6,6 +6,8 @@ produced while the Bitwarden CLI server is starting up (expected during bw_conne
 Robots should import from here instead of importing t_vault directly.
 """
 
+from __future__ import annotations
+
 import contextlib
 import logging
 from typing import Any

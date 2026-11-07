@@ -4,7 +4,7 @@ Core Python library for all Ondemand automation workers.
 
 - **PyPI name:** `ondemand-ai`
 - **Import path:** `ondemand`
-- **Current version:** 1.5.0
+- **Current version:** 1.20.0
 - **Python:** ≥ 3.9
 - **Branch:** `main`
 
@@ -22,11 +22,14 @@ Managed locally with `uv` (`uv.lock` present).
 
 ```
 ondemand/
-├── __init__.py          # Exports: request_approval, ApprovalRequestError
+├── __init__.py          # Exports: request_approval, notify, ApprovalDecision, errors
 ├── worker/              # OndemandWorker, WorkflowReporter (requires [worker] extra)
 ├── supervisor/          # Step/scope management for run reporting
 ├── shared/
 │   ├── approval.py      # request_approval, ApprovalRequestError
+│   ├── approval_decision.py  # ApprovalDecision (human_approval signal payload)
+│   ├── notifications.py # notify, NotificationError
+│   ├── webhook_client.py     # shared POST-with-retries to the supervisor webhook
 │   └── ...              # get_logger, shared utilities
 ├── screen_recorder/     # Screen capture for robots that need it
 └── utils/               # General helpers
@@ -38,6 +41,7 @@ Top-level exports (`from ondemand import ...`):
 
 ```python
 from ondemand import request_approval, ApprovalRequestError
+from ondemand import notify, NotificationError, ApprovalDecision
 from ondemand.worker import OndemandWorker, WorkflowReporter
 from ondemand.shared import get_logger
 ```

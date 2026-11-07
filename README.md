@@ -255,19 +255,63 @@ approval_url, rejection_url = request_approval(
     data={"total": 15000, "items": ["NF-001", "NF-002", "NF-003"]},
     show_buttons=True,      # show approve/reject buttons in portal UI
     timeout_days=7,         # auto-reject after 7 days (default)
+    notify=True,            # in-portal notification for the organization (default)
+    email=["revisor@cliente.com.br"],  # e-mail with Aprovar / Rejeitar buttons
 )
-
-# Send notification however you want (email, Slack, WhatsApp, etc.)
-send_email(to="reviewer@client.com", body=f"Aprovar: {approval_url}")
 ```
 
 **Behavior:**
 - Synchronous call -- sends an APPROVAL_REQUESTED webhook to the portal and gets tokenized URLs back
+- The portal notifies the reviewers: an in-portal notification (`notify=True`, the default) and an e-mail to each address in `email`. The robot no longer has to deliver the URLs itself, though it still can (Slack, WhatsApp): they are still returned
+- `notify` and `email` are keyword-only. `email` takes one address or a list; addresses are stripped, validated (`ValueError` before any HTTP call) and de-duplicated
 - After calling, the activity/step should exit normally
 - The Temporal workflow pauses automatically (the worker slot is freed)
 - If approved, the next step executes
 - If rejected, remaining steps are cancelled
 - Raises `ApprovalRequestError` if the portal is unreachable after 3 retries
+
+Since 1.20.0 every approval notifies the portal by default; pass `notify=False` to opt out. An API that predates notifications ignores the extra `notify` key.
+
+**Reading the decision in the workflow.** The API resumes the workflow with the `human_approval` signal, whose argument is `{"approved": bool, "comment": str | None, "resolved_by": str | None}`. `ApprovalDecision` gives it a type (standard library only, safe in the workflow sandbox):
+
+```python
+from typing import Optional
+
+from temporalio import workflow
+
+with workflow.unsafe.imports_passed_through():
+    from ondemand.shared.approval_decision import ApprovalDecision
+
+@workflow.defn
+class MyWorkflow:
+    def __init__(self) -> None:
+        self._decision: Optional[ApprovalDecision] = None
+
+    @workflow.signal
+    async def human_approval(self, data: dict) -> None:
+        self._decision = ApprovalDecision.from_signal(data)
+        # .approved (fails closed), .comment, .resolved_by
+```
+
+### `ondemand.shared.notifications`
+
+Send a notification about the current run, from inside a step. The portal shows it to the run's organization; `email` sends it by e-mail too.
+
+```python
+from ondemand import notify, NotificationError
+
+notification_id = notify(
+    "Conciliacao concluida",                  # required, trimmed, max 200 chars
+    body="1.284 transacoes, 18 sem confianca.",
+    level="success",                          # info | success | warning | error
+    email="financeiro@cliente.com.br",        # one address or a list
+    link="/runs/...",                         # http(s) URL or portal path
+)
+```
+
+- Posts the `NOTIFY` action to the run's supervisor webhook, with the same headers and retry policy as `request_approval`
+- Invalid title, level, address or link: `ValueError`, before any HTTP call
+- Raises `NotificationError` outside an Ondemand run, after 3 failed attempts, or when the API answers without a `notification_id` (an API that predates `NOTIFY`). If a notification is not worth failing the run over, catch it
 
 ### `ondemand.shared.artifacts`
 
@@ -318,7 +362,7 @@ Set by the platform at runtime. For local development, set them manually or use 
 
 ```
 ondemand/
-├── __init__.py                    # Top-level: request_approval, ApprovalRequestError
+├── __init__.py                    # Top-level: request_approval, notify, ApprovalDecision, errors
 ├── worker/
 │   ├── __init__.py                # Exports: OndemandWorker, report, ActivityReporter, setup_logging
 │   ├── base.py                    # OndemandWorker + activity interceptor + graceful shutdown
@@ -328,6 +372,9 @@ ondemand/
 └── shared/
     ├── __init__.py                # Re-exports all shared utilities
     ├── approval.py                # request_approval() for HITL workflows
+    ├── approval_decision.py       # ApprovalDecision: typed human_approval signal payload
+    ├── notifications.py           # notify(), NotificationError
+    ├── webhook_client.py          # POST to the supervisor webhook with retries
     ├── artifacts.py               # save_artifact, load_artifact, output dirs, RunInfo
     ├── logging.py                 # OndemandLogger with SUCCESS level
     └── r2_storage.py              # R2StorageClient, upload_content, download_input_files
